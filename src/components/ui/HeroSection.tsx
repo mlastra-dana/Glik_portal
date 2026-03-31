@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 const HeroSection = () => {
   return (
     <section className="container-app py-6 sm:py-8">
-      <div className="overflow-hidden rounded-2xl border border-white/10 bg-glik-primary shadow-card">
+      <div className="overflow-hidden rounded-2xl border border-white/15 bg-glik-primary shadow-card">
         <div className="grid min-h-[420px] lg:grid-cols-[220px,1fr]">
-          <div className="hidden bg-black/25 lg:block" />
+          <div className="hidden bg-glik-primary/55 lg:block" />
 
           <div className="bg-hero-mesh px-6 py-10 sm:px-10 sm:py-12">
             <div className="max-w-3xl">

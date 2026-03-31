@@ -10,10 +10,11 @@ export default {
       },
       colors: {
         glik: {
-          primary: '#12002F',
-          secondary: '#2A1460',
-          accent: '#F8981D',
-          light: '#F4F1FA',
+          primary: '#1F0249',
+          secondary: '#6638B6',
+          secondaryStrong: '#4F2DA4',
+          accent: '#FF8F1C',
+          light: '#F3F0FB',
           success: '#0C9B5A',
           warning: '#D99A00',
           danger: '#DC3B46',
@@ -21,12 +22,12 @@ export default {
         }
       },
       boxShadow: {
-        soft: '0 10px 30px rgba(18, 0, 47, 0.16)',
-        card: '0 8px 24px rgba(18, 0, 47, 0.20)'
+        soft: '0 10px 26px rgba(31, 2, 73, 0.12)',
+        card: '0 10px 28px rgba(31, 2, 73, 0.18)'
       },
       backgroundImage: {
         'hero-mesh':
-          'radial-gradient(circle at 20% 20%, rgba(109, 58, 207, 0.22), transparent 40%), radial-gradient(circle at 80% 0%, rgba(248, 152, 29, 0.18), transparent 30%), linear-gradient(135deg, #12002F 0%, #2A1460 100%)'
+          'radial-gradient(circle at 20% 20%, rgba(102, 56, 182, 0.30), transparent 42%), radial-gradient(circle at 85% 5%, rgba(255, 143, 28, 0.20), transparent 34%), linear-gradient(135deg, #1F0249 0%, #3A1A7E 100%)'
       }
     }
   },
