@@ -24,6 +24,7 @@ interface LambdaBackendResponse {
 }
 
 const lambdaUrl = import.meta.env.VITE_NOMBRE_FUNCION_LAMBDA_URL;
+const lambdaTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
 
 const toBase64 = async (file: File): Promise<string> => {
   const bytes = await file.arrayBuffer();
@@ -74,13 +75,29 @@ export const runLambdaValidation = async (
     }
   };
 
-  const response = await fetch(lambdaUrl, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), lambdaTimeoutMs);
+
+  let response: Response;
+  try {
+    response = await fetch(lambdaUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(
+        `La validación excedió ${Math.round(lambdaTimeoutMs / 1000)}s. Intente con un archivo más liviano o reintente.`
+      );
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
 
   const body = (await response.json()) as LambdaBackendResponse | LambdaValidationResponse;
   if (!response.ok) {
