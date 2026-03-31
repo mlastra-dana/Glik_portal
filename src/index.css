@@ -18,7 +18,7 @@
   }
 
   :focus-visible {
-    @apply outline-none ring-2 ring-glik-primary ring-offset-2;
+    @apply outline-none ring-2 ring-glik-accent ring-offset-2;
   }
 }
 
@@ -36,7 +36,7 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-glik-primary px-5 py-2.5 text-sm font-semibold text-white shadow-card transition hover:bg-blue-700;
+    @apply inline-flex items-center justify-center rounded-xl bg-glik-accent px-5 py-2.5 text-sm font-semibold text-white shadow-card transition hover:bg-orange-600;
   }
 
   .btn-secondary {

@@ -1,4 +1,5 @@
 import { Link, NavLink, useLocation } from 'react-router-dom';
+import logoGlik from '../../assets/logo-glik.png';
 
 const navLinks = [
   { label: 'Inicio', path: '/' },
@@ -10,16 +11,11 @@ const Header = () => {
   const location = useLocation();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+    <header className="sticky top-0 z-40 border-b border-white/10 bg-glik-primary text-white backdrop-blur">
       <div className="container-app flex h-16 items-center justify-between gap-3">
         <Link to="/" className="flex items-center gap-3" aria-label="Ir al inicio">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-glik-primary text-sm font-bold text-white">
-            GL
-          </div>
-          <div>
-            <p className="font-display text-base font-bold text-glik-secondary">GLIK Portal</p>
-            <p className="text-[11px] text-slate-500">Validación documental</p>
-          </div>
+          <img src={logoGlik} alt="GLIK" className="h-8 w-auto sm:h-9" />
+          <span className="hidden text-xs text-purple-100 sm:inline">Portal de validación documental</span>
         </Link>
 
         <nav className="hidden items-center gap-5 md:flex">
@@ -29,7 +25,7 @@ const Header = () => {
                 <a
                   key={link.label}
                   href={link.path}
-                  className="text-sm font-semibold text-slate-600 hover:text-glik-primary"
+                  className="text-sm font-semibold text-purple-100 hover:text-white"
                 >
                   {link.label}
                 </a>
@@ -41,7 +37,7 @@ const Header = () => {
                 key={link.label}
                 to={link.path}
                 className={({ isActive }) =>
-                  `text-sm font-semibold ${isActive ? 'text-glik-primary' : 'text-slate-600 hover:text-glik-primary'}`
+                  `text-sm font-semibold ${isActive ? 'text-white' : 'text-purple-100 hover:text-white'}`
                 }
               >
                 {link.label}

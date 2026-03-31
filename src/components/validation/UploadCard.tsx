@@ -55,7 +55,7 @@ const UploadCard = ({ document, onSelectFile, onClear }: UploadCardProps) => {
     <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
-          <div className="rounded-lg bg-blue-50 p-2 text-glik-primary">{iconByDocument[document.type]}</div>
+          <div className="rounded-lg bg-purple-50 p-2 text-glik-primary">{iconByDocument[document.type]}</div>
           <div>
             <h3 className="text-base font-bold text-glik-secondary">{document.label}</h3>
             <p className="mt-1 text-xs text-slate-600">{document.description}</p>
@@ -68,7 +68,7 @@ const UploadCard = ({ document, onSelectFile, onClear }: UploadCardProps) => {
       <button
         type="button"
         onClick={handleOpenFilePicker}
-        className="mt-4 flex w-full items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-left transition hover:border-glik-primary hover:bg-blue-50/40"
+        className="mt-4 flex w-full items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-left transition hover:border-glik-primary hover:bg-purple-50/60"
       >
         <span className="text-sm font-medium text-slate-700">
           {document.fileName ? document.fileName : 'Seleccione o arrastre el archivo correspondiente'}

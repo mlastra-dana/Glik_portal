@@ -11,7 +11,7 @@ const statusMap: Record<StatusBadgeProps['status'], { label: string; className: 
   },
   uploaded: {
     label: 'Cargado',
-    className: 'bg-sky-100 text-sky-700'
+    className: 'bg-purple-100 text-purple-700'
   },
   validated: {
     label: 'Validado',

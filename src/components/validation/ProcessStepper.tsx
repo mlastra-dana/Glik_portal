@@ -23,7 +23,7 @@ const ProcessStepper = ({ currentStep }: ProcessStepperProps) => {
                   isCompleted
                     ? 'bg-emerald-100 text-emerald-700'
                     : isActive
-                      ? 'bg-blue-100 text-glik-primary'
+                      ? 'bg-purple-100 text-glik-primary'
                       : 'bg-slate-200 text-slate-600'
                 }`}
               >
