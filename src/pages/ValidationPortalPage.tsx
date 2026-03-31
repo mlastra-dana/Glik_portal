@@ -5,8 +5,8 @@ import ResultPanel from '../components/validation/ResultPanel';
 import UploadCard from '../components/validation/UploadCard';
 import EmptyState from '../components/ui/EmptyState';
 import LoadingState from '../components/ui/LoadingState';
-import { documentSlotsSeed, expectedDocumentTypeHints } from '../mocks/documents';
-import { runMockValidation } from '../mocks/validation';
+import { documentSlotsSeed } from '../mocks/documents';
+import { runLambdaValidation } from '../services/validationClient';
 import { UploadedDocument, ValidationResult } from '../types/validation';
 
 const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
@@ -15,14 +15,6 @@ const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
   fileName: null,
   status: 'pending'
 });
-
-const normalize = (value: string) => value.toLowerCase().trim();
-
-const matchesExpectedType = (type: UploadedDocument['type'], fileName: string) => {
-  const hints = expectedDocumentTypeHints[type];
-  const normalizedName = normalize(fileName);
-  return hints.some((hint) => normalizedName.includes(hint));
-};
 
 const ValidationPortalPage = () => {
   const [documents, setDocuments] = useState<UploadedDocument[]>(documentSlotsSeed);
@@ -53,7 +45,7 @@ const ValidationPortalPage = () => {
               ...doc,
               file,
               fileName: file.name,
-              status: matchesExpectedType(type, file.name) ? 'validated' : 'error'
+              status: 'uploaded'
             }
           : doc
       )
@@ -85,7 +77,23 @@ const ValidationPortalPage = () => {
       setHasValidationAttempt(true);
       setIsValidating(true);
 
-      const validationResult = await runMockValidation(documents);
+      let validationResult: ValidationResult;
+      try {
+        validationResult = await runLambdaValidation(documents);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Error no controlado';
+        validationResult = {
+          invoice_document_valid: false,
+          certificate_document_valid: false,
+          photo_plate_valid: false,
+          photo_serial_valid: false,
+          plate_match: false,
+          serial_match: false,
+          overall_status: 'manual_review',
+          messages: [`No se pudo validar contra Lambda: ${message}`]
+        };
+      }
+
       if (!isMounted) {
         return;
       }
