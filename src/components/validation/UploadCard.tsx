@@ -6,6 +6,7 @@ interface UploadCardProps {
   document: UploadedDocument;
   onSelectFile: (type: UploadedDocument['type'], file: File) => void;
   onClear: (type: UploadedDocument['type']) => void;
+  isValidating?: boolean;
 }
 
 const iconByDocument: Record<DocumentType, JSX.Element> = {
@@ -37,7 +38,7 @@ const iconByDocument: Record<DocumentType, JSX.Element> = {
   )
 };
 
-const UploadCard = ({ document, onSelectFile, onClear }: UploadCardProps) => {
+const UploadCard = ({ document, onSelectFile, onClear, isValidating = false }: UploadCardProps) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleOpenFilePicker = () => {
@@ -62,7 +63,25 @@ const UploadCard = ({ document, onSelectFile, onClear }: UploadCardProps) => {
             <p className="mt-1 text-[11px] text-slate-500">Formato permitido: {document.acceptedFormats}</p>
           </div>
         </div>
-        <StatusBadge status={document.status} />
+        <div className="flex items-center gap-2">
+          {document.fileName ? (
+            <button
+              type="button"
+              onClick={() => onClear(document.type)}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-bold text-slate-500 transition hover:border-rose-400 hover:text-rose-600"
+              aria-label={`Quitar ${document.label}`}
+            >
+              ×
+            </button>
+          ) : null}
+          {isValidating ? (
+            <span
+              className="inline-flex h-5 w-5 animate-spin rounded-full border-2 border-glik-secondary border-t-transparent"
+              aria-label="Validando documento"
+            />
+          ) : null}
+          <StatusBadge status={document.status} />
+        </div>
       </div>
 
       <button
@@ -73,23 +92,10 @@ const UploadCard = ({ document, onSelectFile, onClear }: UploadCardProps) => {
         <span className="text-sm font-medium text-slate-700">
           {document.fileName ? document.fileName : 'Seleccione o arrastre el archivo correspondiente'}
         </span>
-        <span className="text-xs font-semibold text-glik-primary">Cargar</span>
+        <span className="text-xs font-semibold text-glik-primary">
+          {document.fileName ? 'Reemplazar' : 'Subir'}
+        </span>
       </button>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="btn-primary px-4 py-2" onClick={handleOpenFilePicker}>
-          {document.fileName ? 'Reemplazar archivo' : 'Seleccionar archivo'}
-        </button>
-        {document.fileName ? (
-          <button
-            type="button"
-            className="btn-secondary border-rose-300 text-rose-700 hover:border-rose-500 hover:text-rose-700"
-            onClick={() => onClear(document.type)}
-          >
-            Eliminar
-          </button>
-        ) : null}
-      </div>
 
       <input
         ref={inputRef}
