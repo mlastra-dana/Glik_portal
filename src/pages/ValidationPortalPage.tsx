@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ProcessStepper from '../components/validation/ProcessStepper';
 import ResultPanel from '../components/validation/ResultPanel';
@@ -22,13 +22,8 @@ const ValidationPortalPage = () => {
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [lastValidationSignature, setLastValidationSignature] = useState('');
 
-  const uploadedCount = useMemo(
-    () => documents.filter((document) => Boolean(document.file)).length,
-    [documents]
-  );
-
   const validationSignature = documents.map((document) => document.fileName ?? '').join('|');
-  const hasAnyDocument = uploadedCount > 0;
+  const hasAnyDocument = documents.some((document) => Boolean(document.file));
 
   const currentStep: 1 | 2 | 3 = result ? 3 : hasValidationAttempt || isValidating ? 2 : 1;
 
@@ -154,17 +149,6 @@ const ValidationPortalPage = () => {
       </div>
 
       <div className="mt-5 space-y-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-          <div>
-            <h2 className="text-base font-bold text-glik-secondary">Carga documental logística</h2>
-            <p className="text-sm text-slate-600">Soportes cargados: {uploadedCount}/4</p>
-          </div>
-
-          <p className="mt-3 text-sm text-slate-600">
-            La validación se ejecuta automáticamente al cargar los documentos.
-          </p>
-        </div>
-
         <div className="grid gap-4 md:grid-cols-2">
           {documents.map((document) => (
             <UploadCard
