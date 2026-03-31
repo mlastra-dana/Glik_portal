@@ -16,6 +16,7 @@ export interface UploadedDocument {
   file: File | null;
   fileName: string | null;
   status: UploadSlotStatus;
+  errorMessage?: string | null;
   required: boolean;
 }
 

@@ -12,7 +12,8 @@ const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
   ...doc,
   file: null,
   fileName: null,
-  status: 'pending'
+  status: 'pending',
+  errorMessage: null
 });
 
 const ValidationPortalPage = () => {
@@ -39,7 +40,8 @@ const ValidationPortalPage = () => {
               ...doc,
               file,
               fileName: file.name,
-              status: 'uploaded'
+              status: 'uploaded',
+              errorMessage: null
             }
           : doc
       )
@@ -111,7 +113,8 @@ const ValidationPortalPage = () => {
 
           return {
             ...doc,
-            status: hasErrors ? 'error' : 'validated'
+            status: hasErrors ? 'error' : 'validated',
+            errorMessage: hasErrors ? 'Documento con observaciones en la validación.' : null
           };
         })
       );

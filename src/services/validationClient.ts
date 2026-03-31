@@ -24,6 +24,9 @@ interface LambdaBackendResponse {
 }
 
 const lambdaUrl = import.meta.env.VITE_NOMBRE_FUNCION_LAMBDA_URL;
+const uploadSignerUrl = import.meta.env.VITE_UPLOAD_SIGNER_URL || lambdaUrl;
+const useS3Upload = String(import.meta.env.VITE_USE_S3_UPLOAD ?? 'true') === 'true';
+const configuredBucketName = import.meta.env.VITE_S3_BUCKET_NAME;
 const lambdaTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
 
 const toBase64 = async (file: File): Promise<string> => {
@@ -34,6 +37,65 @@ const toBase64 = async (file: File): Promise<string> => {
     binary += String.fromCharCode(view[i]);
   }
   return btoa(binary);
+};
+
+interface PresignResponse {
+  success: boolean;
+  message?: string;
+  bucket?: string;
+  key?: string;
+  upload_url?: string;
+}
+
+const createPresignedUrl = async (slot: UploadedDocument['type'], file: File) => {
+  if (!uploadSignerUrl) {
+    throw new Error('Falta VITE_UPLOAD_SIGNER_URL o VITE_NOMBRE_FUNCION_LAMBDA_URL.');
+  }
+
+  const response = await fetch(uploadSignerUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      action: 'create_upload_url',
+      slot,
+      filename: file.name,
+      content_type: file.type || 'application/octet-stream'
+    })
+  });
+
+  const body = (await response.json()) as PresignResponse;
+  if (!response.ok || !body.success || !body.upload_url || !body.key) {
+    throw new Error(body.message ?? 'No se pudo obtener URL de carga a S3.');
+  }
+
+  return {
+    uploadUrl: body.upload_url,
+    key: body.key,
+    bucket: body.bucket || configuredBucketName
+  };
+};
+
+const uploadFileToS3 = async (slot: UploadedDocument['type'], file: File) => {
+  const { uploadUrl, key, bucket } = await createPresignedUrl(slot, file);
+  const putResponse = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': file.type || 'application/octet-stream'
+    },
+    body: file
+  });
+
+  if (!putResponse.ok) {
+    throw new Error(`Falló carga a bucket para ${slot}. HTTP ${putResponse.status}`);
+  }
+
+  if (!bucket) {
+    throw new Error('No se recibió bucket de destino para validación.');
+  }
+
+  return { bucket, key };
 };
 
 export const runLambdaValidation = async (
@@ -53,12 +115,21 @@ export const runLambdaValidation = async (
   const toPayloadSlot = async (type: UploadedDocument['type']) => {
     const doc = byType[type];
     if (!doc?.file || !doc?.fileName) {
-      // En validación online enviamos el slot vacío para que Lambda procese parcial sin romper contrato.
       return {
         filename: '',
         content_base64: ''
       };
     }
+
+    if (useS3Upload) {
+      const location = await uploadFileToS3(type, doc.file);
+      return {
+        filename: doc.fileName,
+        s3_bucket: location.bucket,
+        s3_key: location.key
+      };
+    }
+
     return {
       filename: doc.fileName,
       content_base64: await toBase64(doc.file)

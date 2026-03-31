@@ -104,6 +104,8 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false }: U
         className="hidden"
         accept=".pdf,.png,.jpg,.jpeg"
       />
+
+      {document.errorMessage ? <p className="mt-2 text-xs font-medium text-rose-600">{document.errorMessage}</p> : null}
     </article>
   );
 };

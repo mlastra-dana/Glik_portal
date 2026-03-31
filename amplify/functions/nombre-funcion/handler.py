@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import uuid
 from typing import Any, Dict, Optional, Tuple
 
 import boto3
@@ -15,6 +16,7 @@ logger.setLevel(logging.INFO)
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+DOCUMENTS_BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET_NAME", "")
 
 if not BEDROCK_MODEL_ID:
     logger.warning("BEDROCK_MODEL_ID no está definido en variables de entorno.")
@@ -26,6 +28,7 @@ bedrock = boto3.client(
     region_name=AWS_REGION,
     config=Config(read_timeout=300, connect_timeout=10, retries={"max_attempts": 2}),
 )
+s3 = boto3.client("s3", region_name=AWS_REGION)
 
 
 def cors_headers() -> Dict[str, str]:
@@ -43,6 +46,69 @@ def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
         "headers": cors_headers(),
         "body": json.dumps(body, ensure_ascii=False),
     }
+
+
+def sanitize_filename(filename: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", filename.strip())
+    return cleaned or "documento"
+
+
+def create_upload_url(slot: str, filename: str, content_type: str) -> Dict[str, Any]:
+    if not DOCUMENTS_BUCKET_NAME:
+        return response(
+            500,
+            {
+                "success": False,
+                "message": "DOCUMENTS_BUCKET_NAME no está configurado.",
+            },
+        )
+
+    safe_name = sanitize_filename(filename)
+    key = f"expedientes/{slot}/{uuid.uuid4().hex}_{safe_name}"
+    try:
+        upload_url = s3.generate_presigned_url(
+            ClientMethod="put_object",
+            Params={
+                "Bucket": DOCUMENTS_BUCKET_NAME,
+                "Key": key,
+                "ContentType": content_type or "application/octet-stream",
+            },
+            ExpiresIn=900,
+        )
+    except (ClientError, BotoCoreError) as exc:
+        logger.exception("No se pudo crear URL presignada")
+        return response(
+            500,
+            {
+                "success": False,
+                "message": f"No se pudo generar URL de carga: {str(exc)}",
+            },
+        )
+
+    return response(
+        200,
+        {
+            "success": True,
+            "bucket": DOCUMENTS_BUCKET_NAME,
+            "key": key,
+            "upload_url": upload_url,
+            "expires_in": 900,
+        },
+    )
+
+
+def get_document_bytes(filename: str, document: Dict[str, Any]) -> bytes:
+    content_base64 = document.get("content_base64")
+    if content_base64:
+        return base64.b64decode(content_base64)
+
+    s3_key = document.get("s3_key")
+    s3_bucket = document.get("s3_bucket") or DOCUMENTS_BUCKET_NAME
+    if s3_key and s3_bucket:
+        obj = s3.get_object(Bucket=s3_bucket, Key=s3_key)
+        return obj["Body"].read()
+
+    raise ValueError(f"No se recibió contenido ni referencia S3 para {filename}")
 
 
 def get_extension(filename: str) -> str:
@@ -141,11 +207,11 @@ def make_user_message(slot: str, filename: str, file_bytes: bytes) -> Dict[str, 
     raise ValueError(f"Extensión no soportada para {filename}: {ext}")
 
 
-def invoke_bedrock_json_extractor(slot: str, filename: str, content_base64: str) -> Dict[str, Any]:
+def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, Any]) -> Dict[str, Any]:
     """
     Invoca Bedrock para un slot específico y espera un JSON estricto.
     """
-    file_bytes = base64.b64decode(content_base64)
+    file_bytes = get_document_bytes(filename, document)
     user_message = make_user_message(slot, filename, file_bytes)
 
     system_prompt = build_system_prompt(slot)
@@ -369,6 +435,15 @@ def lambda_handler(event, context):
     except json.JSONDecodeError:
         return response(400, {"success": False, "message": "Body JSON inválido"})
 
+    action = body.get("action")
+    if action == "create_upload_url":
+        slot = body.get("slot") or "general"
+        filename = body.get("filename") or ""
+        content_type = body.get("content_type") or "application/octet-stream"
+        if not filename:
+            return response(400, {"success": False, "message": "filename es requerido"})
+        return create_upload_url(slot=slot, filename=filename, content_type=content_type)
+
     documents = body.get("documents") or {}
     expedient_id = body.get("expedient_id")
 
@@ -389,9 +464,10 @@ def lambda_handler(event, context):
     for slot in required_slots:
         doc = documents.get(slot) or {}
         filename = doc.get("filename")
-        content_base64 = doc.get("content_base64")
+        has_base64 = bool(doc.get("content_base64"))
+        has_s3_ref = bool(doc.get("s3_key"))
 
-        if not filename or not content_base64:
+        if not filename or (not has_base64 and not has_s3_ref):
             extraction_results[slot] = {
                 "document_valid": False,
                 "plate": None,
@@ -403,7 +479,7 @@ def lambda_handler(event, context):
         extraction_results[slot] = invoke_bedrock_json_extractor(
             slot=slot,
             filename=filename,
-            content_base64=content_base64,
+            document=doc,
         )
 
     # Normalizar valores extraídos

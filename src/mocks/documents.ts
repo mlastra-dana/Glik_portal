@@ -9,6 +9,7 @@ export const documentSlotsSeed: UploadedDocument[] = [
     file: null,
     fileName: null,
     status: 'pending',
+    errorMessage: null,
     required: true
   },
   {
@@ -19,6 +20,7 @@ export const documentSlotsSeed: UploadedDocument[] = [
     file: null,
     fileName: null,
     status: 'pending',
+    errorMessage: null,
     required: true
   },
   {
@@ -29,6 +31,7 @@ export const documentSlotsSeed: UploadedDocument[] = [
     file: null,
     fileName: null,
     status: 'pending',
+    errorMessage: null,
     required: true
   },
   {
@@ -39,6 +42,7 @@ export const documentSlotsSeed: UploadedDocument[] = [
     file: null,
     fileName: null,
     status: 'pending',
+    errorMessage: null,
     required: true
   }
 ];
