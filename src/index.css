@@ -10,7 +10,7 @@
   }
 
   body {
-    @apply bg-glik-primary text-slate-800 antialiased;
+    @apply bg-[#2A1460] text-slate-800 antialiased;
   }
 
   a {
