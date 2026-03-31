@@ -1,0 +1,505 @@
+import base64
+import json
+import logging
+import os
+import re
+from typing import Any, Dict, Optional, Tuple
+
+import boto3
+from botocore.config import Config
+from botocore.exceptions import BotoCoreError, ClientError
+
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
+
+AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
+BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
+
+if not BEDROCK_MODEL_ID:
+    logger.warning("BEDROCK_MODEL_ID no está definido en variables de entorno.")
+
+# Para modelos Claude 3.7 / 4 AWS recomienda aumentar read_timeout bastante.
+# Dejamos 300s como valor inicial razonable para demo.
+bedrock = boto3.client(
+    "bedrock-runtime",
+    region_name=AWS_REGION,
+    config=Config(read_timeout=300, connect_timeout=10, retries={"max_attempts": 2}),
+)
+
+
+def cors_headers() -> Dict[str, str]:
+    return {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
+        "Access-Control-Allow-Headers": "Content-Type,Authorization",
+        "Access-Control-Allow-Methods": "OPTIONS,POST",
+    }
+
+
+def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "statusCode": status_code,
+        "headers": cors_headers(),
+        "body": json.dumps(body, ensure_ascii=False),
+    }
+
+
+def get_extension(filename: str) -> str:
+    if "." not in filename:
+        return ""
+    return filename.rsplit(".", 1)[-1].lower().strip()
+
+
+def normalize_image_format(ext: str) -> str:
+    if ext == "jpg":
+        return "jpeg"
+    return ext
+
+
+def normalize_plate(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = re.sub(r"\s+", "", value).upper().strip()
+    # placas venezolanas típicamente 6-7 alfanuméricos
+    if re.fullmatch(r"[A-Z0-9]{6,7}", cleaned):
+        return cleaned
+    return cleaned if cleaned else None
+
+
+def normalize_serial(value: Optional[str]) -> Optional[str]:
+    if not value or not isinstance(value, str):
+        return None
+    cleaned = re.sub(r"[^A-Z0-9]", "", value.upper())
+    return cleaned or None
+
+
+def safe_json_loads(raw: str) -> Dict[str, Any]:
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Intento de rescate si el modelo devolvió texto adicional
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            raise
+        return json.loads(match.group(0))
+
+
+def extract_text_from_bedrock_response(resp: Dict[str, Any]) -> str:
+    """
+    Extrae el texto concatenado de output.message.content[*].text
+    """
+    try:
+        content_blocks = resp["output"]["message"]["content"]
+        texts = [block["text"] for block in content_blocks if "text" in block]
+        return "\n".join(texts).strip()
+    except Exception as exc:
+        raise ValueError(f"No se pudo leer la respuesta de Bedrock: {exc}") from exc
+
+
+def make_user_message(slot: str, filename: str, file_bytes: bytes) -> Dict[str, Any]:
+    """
+    Construye el bloque de mensaje para Converse.
+    - Para PDF: usa document + text
+    - Para imagen: usa image + text
+    """
+    ext = get_extension(filename)
+
+    if ext in {"pdf"}:
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "text": f"Analiza este documento para el slot '{slot}' y responde según las instrucciones."
+                },
+                {
+                    "document": {
+                        "format": "pdf",
+                        "name": "documento",
+                        "source": {"bytes": file_bytes},
+                    }
+                },
+            ],
+        }
+
+    if ext in {"png", "jpg", "jpeg", "webp", "gif"}:
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "text": f"Analiza esta imagen para el slot '{slot}' y responde según las instrucciones."
+                },
+                {
+                    "image": {
+                        "format": normalize_image_format(ext),
+                        "source": {"bytes": file_bytes},
+                    }
+                },
+            ],
+        }
+
+    raise ValueError(f"Extensión no soportada para {filename}: {ext}")
+
+
+def invoke_bedrock_json_extractor(slot: str, filename: str, content_base64: str) -> Dict[str, Any]:
+    """
+    Invoca Bedrock para un slot específico y espera un JSON estricto.
+    """
+    file_bytes = base64.b64decode(content_base64)
+    user_message = make_user_message(slot, filename, file_bytes)
+
+    system_prompt = build_system_prompt(slot)
+
+    try:
+        resp = bedrock.converse(
+            modelId=BEDROCK_MODEL_ID,
+            system=[{"text": system_prompt}],
+            messages=[user_message],
+            inferenceConfig={
+                "temperature": 0,
+                "maxTokens": 500,
+                "topP": 0.1,
+            },
+        )
+        raw_text = extract_text_from_bedrock_response(resp)
+        logger.info("Respuesta Bedrock slot=%s raw=%s", slot, raw_text)
+        return safe_json_loads(raw_text)
+    except (ClientError, BotoCoreError, ValueError, json.JSONDecodeError) as exc:
+        logger.exception("Error invocando Bedrock para slot=%s", slot)
+        return {
+            "document_valid": False,
+            "plate": None,
+            "serial": None,
+            "reason": f"Error procesando documento: {str(exc)}",
+        }
+
+
+def build_system_prompt(slot: str) -> str:
+    if slot == "invoice":
+        return """
+Eres un validador documental de motocicletas.
+
+Tu tarea es validar si el archivo cargado corresponde a una FACTURA y extraer solo los datos necesarios para validación de expediente.
+
+Responde exclusivamente con JSON válido.
+No agregues explicaciones.
+No agregues texto antes ni después del JSON.
+No uses markdown.
+No inventes datos.
+
+Debes devolver exactamente este esquema:
+{
+  "document_valid": false,
+  "plate": null,
+  "serial": null,
+  "reason": null
+}
+
+Reglas:
+- document_valid debe ser true solo si el archivo corresponde claramente a una factura.
+- plate: extraer la placa solo si aparece explícitamente en la factura.
+- serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
+- Si la factura no tiene placa o serial, devolver null en el campo faltante.
+- No confundas placa con VIN, serial, número de factura o póliza.
+- Si el documento no es factura, document_valid = false.
+- reason debe contener una frase corta:
+  - "Factura válida"
+  - "No corresponde a una factura"
+  - "Factura válida sin placa"
+  - "Factura válida sin serial"
+  - o una combinación equivalente y breve.
+
+La placa debe devolverse en MAYÚSCULAS.
+El serial debe devolverse como texto limpio.
+""".strip()
+
+    if slot == "certificate_of_origin":
+        return """
+Eres un validador documental de motocicletas.
+
+Tu tarea es validar si el archivo cargado corresponde a un CERTIFICADO DE ORIGEN y extraer solo los datos necesarios para validación de expediente.
+
+Responde exclusivamente con JSON válido.
+No agregues explicaciones.
+No agregues texto antes ni después del JSON.
+No uses markdown.
+No inventes datos.
+
+Debes devolver exactamente este esquema:
+{
+  "document_valid": false,
+  "plate": null,
+  "serial": null,
+  "reason": null
+}
+
+Reglas:
+- document_valid debe ser true solo si el archivo corresponde claramente a un certificado de origen.
+- plate: extraer la placa solo si aparece explícitamente en el certificado.
+- serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
+- Si el certificado no tiene placa o serial, devolver null en el campo faltante.
+- Si el documento no es certificado de origen, document_valid = false.
+- reason debe contener una frase corta:
+  - "Certificado válido"
+  - "No corresponde a un certificado de origen"
+  - "Certificado válido sin placa"
+  - "Certificado válido sin serial"
+  - o una combinación equivalente y breve.
+
+La placa debe devolverse en MAYÚSCULAS.
+El serial debe devolverse como texto limpio.
+""".strip()
+
+    if slot == "photo_plate":
+        return """
+Eres un validador documental de motocicletas.
+
+Tu tarea es validar si la imagen cargada corresponde a una FOTOGRAFÍA DE PLACA y extraer únicamente la placa visible.
+
+Responde exclusivamente con JSON válido.
+No agregues explicaciones.
+No agregues texto antes ni después del JSON.
+No uses markdown.
+No inventes datos.
+
+Debes devolver exactamente este esquema:
+{
+  "document_valid": false,
+  "plate": null,
+  "serial": null,
+  "reason": null
+}
+
+Reglas:
+- document_valid debe ser true solo si la imagen corresponde claramente a una foto donde se vea una placa de motocicleta o vehículo.
+- plate: extraer solo la placa visible.
+- serial debe ser null en este tipo de documento.
+- No confundas placa con VIN, serial de motor, serial de carrocería u otros identificadores.
+- Si no se ve una placa clara, document_valid = false.
+- reason debe contener una frase corta:
+  - "Fotoplaca válida"
+  - "No corresponde a una fotoplaca"
+  - "Placa no legible"
+
+La placa debe devolverse en MAYÚSCULAS.
+""".strip()
+
+    if slot == "photo_serial":
+        return """
+Eres un validador documental de motocicletas.
+
+Tu tarea es validar si la imagen cargada corresponde a una FOTOGRAFÍA DE SERIAL y extraer únicamente el serial visible.
+
+Responde exclusivamente con JSON válido.
+No agregues explicaciones.
+No agregues texto antes ni después del JSON.
+No uses markdown.
+No inventes datos.
+
+Debes devolver exactamente este esquema:
+{
+  "document_valid": false,
+  "plate": null,
+  "serial": null,
+  "reason": null
+}
+
+Reglas:
+- document_valid debe ser true solo si la imagen corresponde claramente a una foto de serial de motor, serial de carrocería, serial de chasis o VIN.
+- serial: extraer únicamente el serial visible.
+- plate debe ser null en este tipo de documento.
+- Si no se ve un serial claro, document_valid = false.
+- reason debe contener una frase corta:
+  - "Fotoserial válido"
+  - "No corresponde a un fotoserial"
+  - "Serial no legible"
+
+El serial debe devolverse como texto limpio.
+""".strip()
+
+    raise ValueError(f"Slot no soportado: {slot}")
+
+
+def compare_values(a: Optional[str], b: Optional[str], mode: str) -> Optional[bool]:
+    """
+    Devuelve:
+    - True si ambos existen y coinciden
+    - False si ambos existen y no coinciden
+    - None si alguno falta
+    """
+    if not a or not b:
+        return None
+
+    if mode == "plate":
+        return normalize_plate(a) == normalize_plate(b)
+    if mode == "serial":
+        return normalize_serial(a) == normalize_serial(b)
+
+    return None
+
+
+def aggregate_match(*values: Optional[bool]) -> Optional[bool]:
+    """
+    Si hay un False => False
+    Si todos los no-null son True y hay al menos uno => True
+    Si no hay suficientes datos => None
+    """
+    vals = [v for v in values if v is not None]
+    if not vals:
+        return None
+    if any(v is False for v in vals):
+        return False
+    return True
+
+
+def lambda_handler(event, context):
+    # Preflight CORS
+    if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
+        return {
+            "statusCode": 200,
+            "headers": cors_headers(),
+            "body": "",
+        }
+
+    if event.get("requestContext", {}).get("http", {}).get("method") != "POST":
+        return response(405, {"success": False, "message": "Method not allowed"})
+
+    try:
+        body = json.loads(event.get("body") or "{}")
+    except json.JSONDecodeError:
+        return response(400, {"success": False, "message": "Body JSON inválido"})
+
+    documents = body.get("documents") or {}
+    expedient_id = body.get("expedient_id")
+
+    required_slots = ["invoice", "certificate_of_origin", "photo_plate", "photo_serial"]
+    missing_slots = [slot for slot in required_slots if slot not in documents]
+    if missing_slots:
+        return response(
+            400,
+            {
+                "success": False,
+                "message": "Faltan documentos requeridos",
+                "missing_slots": missing_slots,
+            },
+        )
+
+    extraction_results: Dict[str, Dict[str, Any]] = {}
+
+    for slot in required_slots:
+        doc = documents.get(slot) or {}
+        filename = doc.get("filename")
+        content_base64 = doc.get("content_base64")
+
+        if not filename or not content_base64:
+            extraction_results[slot] = {
+                "document_valid": False,
+                "plate": None,
+                "serial": None,
+                "reason": "Documento no suministrado correctamente",
+            }
+            continue
+
+        extraction_results[slot] = invoke_bedrock_json_extractor(
+            slot=slot,
+            filename=filename,
+            content_base64=content_base64,
+        )
+
+    # Normalizar valores extraídos
+    invoice_plate = normalize_plate(extraction_results["invoice"].get("plate"))
+    cert_plate = normalize_plate(extraction_results["certificate_of_origin"].get("plate"))
+    photo_plate = normalize_plate(extraction_results["photo_plate"].get("plate"))
+
+    invoice_serial = normalize_serial(extraction_results["invoice"].get("serial"))
+    cert_serial = normalize_serial(extraction_results["certificate_of_origin"].get("serial"))
+    photo_serial = normalize_serial(extraction_results["photo_serial"].get("serial"))
+
+    # Validaciones de tipo documental
+    invoice_valid = bool(extraction_results["invoice"].get("document_valid"))
+    certificate_valid = bool(extraction_results["certificate_of_origin"].get("document_valid"))
+    photo_plate_valid = bool(extraction_results["photo_plate"].get("document_valid"))
+    photo_serial_valid = bool(extraction_results["photo_serial"].get("document_valid"))
+
+    # Comparaciones
+    plate_match = aggregate_match(
+        compare_values(invoice_plate, cert_plate, "plate"),
+        compare_values(invoice_plate, photo_plate, "plate"),
+        compare_values(cert_plate, photo_plate, "plate"),
+    )
+
+    serial_match = aggregate_match(
+        compare_values(invoice_serial, cert_serial, "serial"),
+        compare_values(invoice_serial, photo_serial, "serial"),
+        compare_values(cert_serial, photo_serial, "serial"),
+    )
+
+    same_expedient = (
+        invoice_valid
+        and certificate_valid
+        and photo_plate_valid
+        and photo_serial_valid
+        and plate_match is True
+        and serial_match is True
+    )
+
+    messages = []
+
+    # Mensajes por tipo
+    for slot, label in [
+        ("invoice", "La factura"),
+        ("certificate_of_origin", "El certificado de origen"),
+        ("photo_plate", "La fotoplaca"),
+        ("photo_serial", "El fotoserial"),
+    ]:
+        if extraction_results[slot].get("document_valid"):
+            messages.append(f"{label} corresponde al tipo documental esperado.")
+        else:
+            reason = extraction_results[slot].get("reason") or "Tipo documental inválido."
+            messages.append(f"{label}: {reason}")
+
+    # Mensajes de coincidencia
+    if plate_match is True:
+        messages.append("La placa coincide entre documentos e imagen.")
+    elif plate_match is False:
+        messages.append("La placa no coincide entre los documentos e imagen.")
+    else:
+        messages.append("No hubo suficientes datos para validar la placa en todas las fuentes.")
+
+    if serial_match is True:
+        messages.append("El serial coincide entre documentos e imagen.")
+    elif serial_match is False:
+        messages.append("El serial no coincide entre los documentos e imagen.")
+    else:
+        messages.append("No hubo suficientes datos para validar el serial en todas las fuentes.")
+
+    overall_status = "validated" if same_expedient else "manual_review"
+
+    result = {
+        "success": True,
+        "expedient_id": expedient_id,
+        "document_validation": {
+            "invoice_valid": invoice_valid,
+            "certificate_of_origin_valid": certificate_valid,
+            "photo_plate_valid": photo_plate_valid,
+            "photo_serial_valid": photo_serial_valid,
+        },
+        "extracted_data": {
+            "invoice_plate": invoice_plate,
+            "certificate_plate": cert_plate,
+            "photo_plate": photo_plate,
+            "invoice_serial": invoice_serial,
+            "certificate_serial": cert_serial,
+            "photo_serial": photo_serial,
+        },
+        "cross_validation": {
+            "plate_match": plate_match,
+            "serial_match": serial_match,
+            "same_expedient": same_expedient,
+        },
+        "overall_status": overall_status,
+        "messages": messages,
+        "raw_extractions": extraction_results,
+    }
+
+    return response(200, result)

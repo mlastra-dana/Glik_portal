@@ -22,14 +22,16 @@ const ValidationPortalPage = () => {
   const [hasValidationAttempt, setHasValidationAttempt] = useState(false);
   const [result, setResult] = useState<ValidationResult | null>(null);
   const [lastValidationSignature, setLastValidationSignature] = useState('');
+  const [validationProgress, setValidationProgress] = useState(0);
+  const [validationElapsedSeconds, setValidationElapsedSeconds] = useState(0);
 
   const uploadedCount = useMemo(
     () => documents.filter((document) => Boolean(document.file)).length,
     [documents]
   );
 
-  const isReadyForValidation = documents.every((document) => document.file);
   const validationSignature = documents.map((document) => document.fileName ?? '').join('|');
+  const hasAnyDocument = uploadedCount > 0;
 
   const currentStep: 1 | 2 | 3 = result ? 3 : hasValidationAttempt || isValidating ? 2 : 1;
 
@@ -37,6 +39,7 @@ const ValidationPortalPage = () => {
     setResult(null);
     setHasValidationAttempt(false);
     setLastValidationSignature('');
+    setValidationProgress(0);
 
     setDocuments((prev) =>
       prev.map((doc) =>
@@ -56,6 +59,7 @@ const ValidationPortalPage = () => {
     setResult(null);
     setHasValidationAttempt(false);
     setLastValidationSignature('');
+    setValidationProgress(0);
     setDocuments((prev) => prev.map((doc) => (doc.type === type ? resetDocument(doc) : doc)));
   };
 
@@ -63,6 +67,8 @@ const ValidationPortalPage = () => {
     setResult(null);
     setHasValidationAttempt(false);
     setLastValidationSignature('');
+    setValidationProgress(0);
+    setValidationElapsedSeconds(0);
     setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
   };
 
@@ -70,12 +76,14 @@ const ValidationPortalPage = () => {
     let isMounted = true;
 
     const validateAutomatically = async () => {
-      if (!isReadyForValidation || isValidating || validationSignature === lastValidationSignature) {
+      if (!hasAnyDocument || isValidating || validationSignature === lastValidationSignature) {
         return;
       }
 
       setHasValidationAttempt(true);
       setIsValidating(true);
+      setValidationProgress(10);
+      setValidationElapsedSeconds(0);
 
       let validationResult: ValidationResult;
       try {
@@ -100,8 +108,16 @@ const ValidationPortalPage = () => {
 
       setResult(validationResult);
       setLastValidationSignature(validationSignature);
+      setValidationProgress(100);
       setDocuments((prev) =>
         prev.map((doc) => {
+          if (!doc.file) {
+            return {
+              ...doc,
+              status: 'pending'
+            };
+          }
+
           const hasErrors =
             (doc.type === 'invoice' && !validationResult.invoice_document_valid) ||
             (doc.type === 'certificate_of_origin' && !validationResult.certificate_document_valid) ||
@@ -122,7 +138,24 @@ const ValidationPortalPage = () => {
     return () => {
       isMounted = false;
     };
-  }, [documents, isReadyForValidation, isValidating, lastValidationSignature, validationSignature]);
+  }, [documents, hasAnyDocument, isValidating, lastValidationSignature, validationSignature]);
+
+  useEffect(() => {
+    if (!isValidating) {
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      const elapsed = Math.floor((Date.now() - startedAt) / 1000);
+      setValidationElapsedSeconds(elapsed);
+      setValidationProgress((prev) => (prev >= 90 ? prev : prev + 6));
+    }, 500);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [isValidating]);
 
   return (
     <section className="container-app py-8 sm:py-10">
@@ -149,22 +182,37 @@ const ValidationPortalPage = () => {
 
       <div className="mt-5 space-y-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <h2 className="text-base font-bold text-glik-secondary">Carga documental logística</h2>
-                <p className="text-sm text-slate-600">Soportes cargados: {uploadedCount}/4</p>
-              </div>
-              <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-bold text-glik-secondary">Carga documental logística</h2>
+              <p className="text-sm text-slate-600">Soportes cargados: {uploadedCount}/4</p>
+            </div>
+            <div className="flex flex-wrap gap-2">
                 <button type="button" className="btn-secondary" onClick={handleResetFlow}>
                   Limpiar carga
                 </button>
               </div>
             </div>
 
-            <p className="mt-3 text-sm text-slate-600">
-              La validación se ejecuta automáticamente al cargar los documentos.
-            </p>
-          </div>
+          <p className="mt-3 text-sm text-slate-600">
+            La validación se ejecuta automáticamente al cargar los documentos.
+          </p>
+
+          {hasAnyDocument ? (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-3 text-xs text-slate-600">
+                <span>{isValidating ? 'Validando en Lambda...' : 'Validación sincronizada'}</span>
+                <span>{isValidating ? `${validationElapsedSeconds}s` : 'Completada'}</span>
+              </div>
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className={`h-full rounded-full bg-glik-secondary transition-all duration-300 ${isValidating ? 'animate-pulse' : ''}`}
+                  style={{ width: `${Math.max(validationProgress, hasAnyDocument ? 8 : 0)}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
+        </div>
 
         <div className="grid gap-4 md:grid-cols-2">
           {documents.map((document) => (
