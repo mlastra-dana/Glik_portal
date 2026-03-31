@@ -25,6 +25,7 @@ const ValidationPortalPage = () => {
 
   const validationSignature = documents.map((document) => document.fileName ?? '').join('|');
   const hasAnyDocument = documents.some((document) => Boolean(document.file));
+  const hasAllRequiredDocuments = documents.every((document) => Boolean(document.file));
 
   const currentStep: 1 | 2 | 3 = result ? 3 : hasValidationAttempt || isValidating ? 2 : 1;
 
@@ -66,7 +67,7 @@ const ValidationPortalPage = () => {
     let isMounted = true;
 
     const validateAutomatically = async () => {
-      if (!hasAnyDocument || isValidating || validationSignature === lastValidationSignature) {
+      if (!hasAllRequiredDocuments || isValidating || validationSignature === lastValidationSignature) {
         return;
       }
 
@@ -126,7 +127,7 @@ const ValidationPortalPage = () => {
     return () => {
       isMounted = false;
     };
-  }, [documents, hasAnyDocument, isValidating, lastValidationSignature, validationSignature]);
+  }, [documents, hasAllRequiredDocuments, isValidating, lastValidationSignature, validationSignature]);
 
   return (
     <section className="container-app py-8 sm:py-10">
@@ -167,7 +168,11 @@ const ValidationPortalPage = () => {
         {!isValidating && !result ? (
           <EmptyState
             title="Resultado pendiente"
-            description="Cargue los 4 soportes y el sistema generará el resultado logístico automáticamente."
+            description={
+              hasAnyDocument
+                ? 'Complete la carga de los 4 soportes para ejecutar la validación automática.'
+                : 'Cargue los 4 soportes para ejecutar la validación automática.'
+            }
           />
         ) : null}
         {!isValidating && result ? <ResultPanel result={result} onReset={handleResetFlow} /> : null}
