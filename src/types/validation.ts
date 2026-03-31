@@ -11,6 +11,8 @@ export type ExpeditionStatus = 'validated' | 'with_observations' | 'manual_revie
 export interface UploadedDocument {
   type: DocumentType;
   label: string;
+  description: string;
+  acceptedFormats: string;
   file: File | null;
   fileName: string | null;
   status: UploadSlotStatus;

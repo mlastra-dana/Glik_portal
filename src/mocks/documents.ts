@@ -4,6 +4,8 @@ export const documentSlotsSeed: UploadedDocument[] = [
   {
     type: 'invoice',
     label: 'Factura',
+    description: 'Documento fiscal de compra de la motocicleta.',
+    acceptedFormats: 'PDF, JPG o PNG',
     file: null,
     fileName: null,
     status: 'pending',
@@ -12,6 +14,8 @@ export const documentSlotsSeed: UploadedDocument[] = [
   {
     type: 'certificate_of_origin',
     label: 'Certificado de origen',
+    description: 'Soporte del origen y características del vehículo.',
+    acceptedFormats: 'PDF, JPG o PNG',
     file: null,
     fileName: null,
     status: 'pending',
@@ -20,6 +24,8 @@ export const documentSlotsSeed: UploadedDocument[] = [
   {
     type: 'photo_plate',
     label: 'Fotoplaca',
+    description: 'Imagen legible de la placa de la motocicleta.',
+    acceptedFormats: 'JPG o PNG',
     file: null,
     fileName: null,
     status: 'pending',
@@ -28,6 +34,8 @@ export const documentSlotsSeed: UploadedDocument[] = [
   {
     type: 'photo_serial',
     label: 'Fotoserial',
+    description: 'Imagen legible del serial o VIN del vehículo.',
+    acceptedFormats: 'JPG o PNG',
     file: null,
     fileName: null,
     status: 'pending',

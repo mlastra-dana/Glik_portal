@@ -22,7 +22,7 @@ const statusMap: Record<StatusBadgeProps['status'], { label: string; className: 
     className: 'bg-rose-100 text-rose-700'
   },
   with_observations: {
-    label: 'Con observaciones',
+    label: 'Observado',
     className: 'bg-amber-100 text-amber-800'
   },
   manual_review: {

@@ -2,29 +2,27 @@ import { Link, NavLink, useLocation } from 'react-router-dom';
 
 const navLinks = [
   { label: 'Inicio', path: '/' },
-  { label: 'Validación documental', path: '/validation' },
-  { label: 'Cómo funciona', path: '/#como-funciona' },
-  { label: 'Preguntas frecuentes', path: '/#faq' },
-  { label: 'Contacto', path: '/#contacto' }
+  { label: 'Portal de validación', path: '/validation' },
+  { label: 'Ayuda', path: '/#ayuda' }
 ];
 
 const Header = () => {
   const location = useLocation();
 
   return (
-    <header className="sticky top-0 z-40 border-b border-slate-200/70 bg-white/95 backdrop-blur">
-      <div className="container-app flex h-20 items-center justify-between gap-3">
+    <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 backdrop-blur">
+      <div className="container-app flex h-16 items-center justify-between gap-3">
         <Link to="/" className="flex items-center gap-3" aria-label="Ir al inicio">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-glik-primary text-lg font-bold text-white">
-            G
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-glik-primary text-sm font-bold text-white">
+            GL
           </div>
           <div>
-            <p className="font-display text-lg font-bold text-glik-secondary">GLIK Portal</p>
-            <p className="text-xs text-slate-500">Validación documental de motos</p>
+            <p className="font-display text-base font-bold text-glik-secondary">GLIK Portal</p>
+            <p className="text-[11px] text-slate-500">Validación documental</p>
           </div>
         </Link>
 
-        <nav className="hidden items-center gap-6 lg:flex">
+        <nav className="hidden items-center gap-5 md:flex">
           {navLinks.map((link) => {
             if (link.path.includes('#')) {
               return (
@@ -54,10 +52,10 @@ const Header = () => {
 
         <Link
           to="/validation"
-          className="btn-primary px-4 py-2.5"
+          className="btn-primary px-4 py-2"
           aria-current={location.pathname === '/validation' ? 'page' : undefined}
         >
-          Validar expediente
+          Iniciar validación
         </Link>
       </div>
     </header>

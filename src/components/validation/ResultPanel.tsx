@@ -31,12 +31,12 @@ const buildChecklist = (result: ValidationResult): ValidationChecklistItem[] => 
     },
     {
       id: 'plate_match',
-      label: 'Coincidencia de placa en expediente',
+      label: 'Coincidencia de placa en el expediente',
       valid: result.plate_match
     },
     {
       id: 'serial_match',
-      label: 'Coincidencia de serial en expediente',
+      label: 'Coincidencia de serial en el expediente',
       valid: result.serial_match
     }
   ];
@@ -53,10 +53,14 @@ const ResultPanel = ({ result, onReset }: ResultPanelProps) => {
       <ValidationChecklist items={checklist} />
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
-        <h3 className="font-display text-lg font-bold text-glik-secondary">Mensajes de validación</h3>
+        <h3 className="font-display text-lg font-bold text-glik-secondary">Observaciones y decisión</h3>
+        <p className="mt-1 text-sm text-slate-600">
+          Revise los hallazgos antes de continuar con el procesamiento del expediente.
+        </p>
+
         <ul className="mt-4 space-y-2 text-sm text-slate-700">
           {result.messages.map((message, index) => (
-            <li key={`${message}-${index}`} className="rounded-xl bg-slate-50 p-3">
+            <li key={`${message}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               {message}
             </li>
           ))}
@@ -71,7 +75,7 @@ const ResultPanel = ({ result, onReset }: ResultPanelProps) => {
             className={`btn-primary ${canContinue ? '' : 'cursor-not-allowed opacity-50'}`}
             disabled={!canContinue}
           >
-            Continuar
+            Continuar procesamiento
           </button>
           {needsManualReview ? (
             <button type="button" className="btn-primary bg-rose-600 hover:bg-rose-700">

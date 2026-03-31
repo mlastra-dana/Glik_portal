@@ -1,52 +1,44 @@
 export const benefits = [
   {
-    title: 'Precisión documental',
-    description:
-      'Identifica si cada archivo corresponde al tipo exigido para cada expediente de motocicleta.'
+    title: 'Clasificación de documento',
+    description: 'Confirma si cada archivo corresponde al tipo documental requerido.'
   },
   {
-    title: 'Consistencia por expediente',
-    description:
-      'Verifica coincidencia de placa y serial para reducir reprocesos y riesgos operativos.'
+    title: 'Consistencia del expediente',
+    description: 'Compara placa y serial para detectar discrepancias entre soportes.'
   },
   {
-    title: 'Flujo operativo más ágil',
-    description:
-      'Entrega resultados en segundos con un panel claro para decisiones rápidas del equipo.'
+    title: 'Decisión operativa',
+    description: 'Genera estado final: validado, observado o revisión manual.'
   }
 ];
 
 export const flowSteps = [
   {
     title: '1. Carga de documentos',
-    description: 'Adjunta factura, certificado de origen, fotoplaca y fotoserial en un solo flujo.'
+    description: 'Adjunte factura, certificado de origen, fotoplaca y fotoserial.'
   },
   {
-    title: '2. Validación automática',
-    description:
-      'El portal simula reglas de clasificación documental y coherencia de expediente.'
+    title: '2. Validación de reglas',
+    description: 'El sistema valida tipo documental y coherencia del expediente.'
   },
   {
-    title: '3. Resultado y acción',
-    description:
-      'Obtén estado final con checklist y deriva a revisión manual cuando existan observaciones.'
+    title: '3. Resultado y gestión',
+    description: 'Revise observaciones y defina continuidad o revisión manual.'
   }
 ];
 
 export const faqs = [
   {
-    question: '¿Necesito integrar un backend para probar el portal?',
-    answer:
-      'No. Esta versión opera con mocks para simular validaciones y decisiones de estado.'
+    question: '¿Qué sucede si falta un documento?',
+    answer: 'El expediente no puede validarse hasta completar los cuatro documentos obligatorios.'
   },
   {
-    question: '¿Qué pasa si la validación detecta inconsistencias?',
-    answer:
-      'El expediente se marca con observaciones o revisión manual y bloquea la continuación automática.'
+    question: '¿Qué significa estado observado?',
+    answer: 'Existe inconsistencia parcial y el caso requiere revisión antes de continuar.'
   },
   {
-    question: '¿Puedo desplegarlo directamente en AWS Amplify?',
-    answer:
-      'Sí. El proyecto usa Vite con salida SPA compatible con un flujo estándar de Amplify.'
+    question: '¿Este portal ya consume APIs reales?',
+    answer: 'No por ahora. La validación usa datos mock para pruebas funcionales.'
   }
 ];
