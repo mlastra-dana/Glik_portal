@@ -5,8 +5,8 @@ import ResultPanel from '../components/validation/ResultPanel';
 import UploadCard from '../components/validation/UploadCard';
 import EmptyState from '../components/ui/EmptyState';
 import { documentSlotsSeed } from '../mocks/documents';
-import { runLambdaValidation } from '../services/validationClient';
-import { UploadedDocument, ValidationResult } from '../types/validation';
+import { buildValidationResultFromSlots, validateDocumentSlot } from '../services/validationClient';
+import { SlotValidationResult, UploadedDocument, ValidationResult } from '../types/validation';
 
 const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
   ...doc,
@@ -18,21 +18,31 @@ const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
 
 const ValidationPortalPage = () => {
   const [documents, setDocuments] = useState<UploadedDocument[]>(documentSlotsSeed);
-  const [isValidating, setIsValidating] = useState(false);
+  const [validatingSlots, setValidatingSlots] = useState<Record<UploadedDocument['type'], boolean>>({
+    invoice: false,
+    certificate_of_origin: false,
+    photo_plate: false,
+    photo_serial: false
+  });
   const [hasValidationAttempt, setHasValidationAttempt] = useState(false);
   const [result, setResult] = useState<ValidationResult | null>(null);
-  const [lastValidationSignature, setLastValidationSignature] = useState('');
-
-  const validationSignature = documents.map((document) => document.fileName ?? '').join('|');
+  const [slotResults, setSlotResults] = useState<Partial<Record<UploadedDocument['type'], SlotValidationResult>>>({});
+  const [validationError, setValidationError] = useState<string | null>(null);
   const hasAnyDocument = documents.some((document) => Boolean(document.file));
-  const hasAllRequiredDocuments = documents.every((document) => Boolean(document.file));
+  const hasAllRequiredDocuments = documents.every((document) => Boolean(document.file && slotResults[document.type]));
+  const isValidating = Object.values(validatingSlots).some(Boolean);
 
   const currentStep: 1 | 2 | 3 = result ? 3 : hasValidationAttempt || isValidating ? 2 : 1;
 
-  const handleSelectFile = (type: UploadedDocument['type'], file: File) => {
+  const handleSelectFile = async (type: UploadedDocument['type'], file: File) => {
+    setValidationError(null);
     setResult(null);
-    setHasValidationAttempt(false);
-    setLastValidationSignature('');
+    setHasValidationAttempt(true);
+    setSlotResults((prev) => {
+      const next = { ...prev };
+      delete next[type];
+      return next;
+    });
 
     setDocuments((prev) =>
       prev.map((doc) =>
@@ -47,87 +57,76 @@ const ValidationPortalPage = () => {
           : doc
       )
     );
+
+    setValidatingSlots((prev) => ({
+      ...prev,
+      [type]: true
+    }));
+
+    try {
+      const slotResult = await validateDocumentSlot(type, file, file.name);
+      setSlotResults((prev) => ({
+        ...prev,
+        [type]: slotResult
+      }));
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.type === type
+            ? {
+                ...doc,
+                status: slotResult.document_valid ? 'validated' : 'error',
+                errorMessage: slotResult.document_valid ? null : slotResult.reason ?? 'Documento inválido.'
+              }
+            : doc
+        )
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Error no controlado';
+      setValidationError(message);
+      setDocuments((prev) =>
+        prev.map((doc) =>
+          doc.type === type
+            ? {
+                ...doc,
+                status: 'error',
+                errorMessage: message
+              }
+            : doc
+        )
+      );
+    } finally {
+      setValidatingSlots((prev) => ({
+        ...prev,
+        [type]: false
+      }));
+    }
   };
 
   const handleClearFile = (type: UploadedDocument['type']) => {
+    setValidationError(null);
     setResult(null);
-    setHasValidationAttempt(false);
-    setLastValidationSignature('');
+    setSlotResults((prev) => {
+      const next = { ...prev };
+      delete next[type];
+      return next;
+    });
     setDocuments((prev) => prev.map((doc) => (doc.type === type ? resetDocument(doc) : doc)));
   };
 
   const handleResetFlow = () => {
+    setValidationError(null);
     setResult(null);
     setHasValidationAttempt(false);
-    setLastValidationSignature('');
+    setSlotResults({});
     setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
   };
 
   useEffect(() => {
-    let isMounted = true;
-
-    const validateAutomatically = async () => {
-      if (!hasAllRequiredDocuments || isValidating || validationSignature === lastValidationSignature) {
-        return;
-      }
-
-      setHasValidationAttempt(true);
-      setIsValidating(true);
-
-      let validationResult: ValidationResult;
-      try {
-        validationResult = await runLambdaValidation(documents);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Error no controlado';
-        validationResult = {
-          invoice_document_valid: false,
-          certificate_document_valid: false,
-          photo_plate_valid: false,
-          photo_serial_valid: false,
-          plate_match: false,
-          serial_match: false,
-          overall_status: 'manual_review',
-          messages: [`No se pudo validar contra Lambda: ${message}`]
-        };
-      }
-
-      if (!isMounted) {
-        return;
-      }
-
-      setResult(validationResult);
-      setLastValidationSignature(validationSignature);
-      setDocuments((prev) =>
-        prev.map((doc) => {
-          if (!doc.file) {
-            return {
-              ...doc,
-              status: 'pending'
-            };
-          }
-
-          const hasErrors =
-            (doc.type === 'invoice' && !validationResult.invoice_document_valid) ||
-            (doc.type === 'certificate_of_origin' && !validationResult.certificate_document_valid) ||
-            (doc.type === 'photo_plate' && !validationResult.photo_plate_valid) ||
-            (doc.type === 'photo_serial' && !validationResult.photo_serial_valid);
-
-          return {
-            ...doc,
-            status: hasErrors ? 'error' : 'validated',
-            errorMessage: hasErrors ? 'Documento con observaciones en la validación.' : null
-          };
-        })
-      );
-      setIsValidating(false);
-    };
-
-    void validateAutomatically();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [documents, hasAllRequiredDocuments, isValidating, lastValidationSignature, validationSignature]);
+    if (!hasAllRequiredDocuments || isValidating) {
+      return;
+    }
+    setResult(buildValidationResultFromSlots(slotResults));
+  }, [hasAllRequiredDocuments, isValidating, slotResults]);
 
   return (
     <section className="container-app py-8 sm:py-10">
@@ -160,18 +159,24 @@ const ValidationPortalPage = () => {
               document={document}
               onSelectFile={handleSelectFile}
               onClear={handleClearFile}
-              isValidating={isValidating && Boolean(document.file)}
+              isValidating={validatingSlots[document.type]}
             />
           ))}
         </div>
+
+        {validationError ? (
+          <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+            Error de validación: {validationError}
+          </div>
+        ) : null}
 
         {!isValidating && !result ? (
           <EmptyState
             title="Resultado pendiente"
             description={
               hasAnyDocument
-                ? 'Complete la carga de los 4 soportes para ejecutar la validación automática.'
-                : 'Cargue los 4 soportes para ejecutar la validación automática.'
+                ? 'Cada documento se valida al cargar. Al completar los 4 soportes se mostrará el resultado consolidado.'
+                : 'Cargue los soportes para iniciar validación documental en línea.'
             }
           />
         ) : null}

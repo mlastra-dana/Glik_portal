@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, Optional, Tuple
 
 import boto3
@@ -17,6 +18,8 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 DOCUMENTS_BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET_NAME", "")
+SLOT_VALIDATION_MAX_WORKERS = int(os.environ.get("SLOT_VALIDATION_MAX_WORKERS", "4"))
+BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "260"))
 
 if not BEDROCK_MODEL_ID:
     logger.warning("BEDROCK_MODEL_ID no está definido en variables de entorno.")
@@ -223,7 +226,7 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
             messages=[user_message],
             inferenceConfig={
                 "temperature": 0,
-                "maxTokens": 500,
+                "maxTokens": BEDROCK_MAX_TOKENS,
                 "topP": 0.1,
             },
         )
@@ -418,6 +421,49 @@ def aggregate_match(*values: Optional[bool]) -> Optional[bool]:
     return True
 
 
+def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    filename = doc.get("filename")
+    has_base64 = bool(doc.get("content_base64"))
+    has_s3_ref = bool(doc.get("s3_key"))
+
+    if not filename or (not has_base64 and not has_s3_ref):
+        return (
+            slot,
+            {
+                "document_valid": False,
+                "plate": None,
+                "serial": None,
+                "reason": "Documento no suministrado correctamente",
+            },
+        )
+
+    result = invoke_bedrock_json_extractor(
+        slot=slot,
+        filename=filename,
+        document=doc,
+    )
+    return slot, result
+
+
+def handle_validate_slot(body: Dict[str, Any]) -> Dict[str, Any]:
+    slot = body.get("slot")
+    document = body.get("document") or {}
+
+    valid_slots = {"invoice", "certificate_of_origin", "photo_plate", "photo_serial"}
+    if slot not in valid_slots:
+        return response(400, {"success": False, "message": "slot inválido"})
+
+    slot_name, result = process_slot(slot, document)
+    return response(
+        200,
+        {
+            "success": True,
+            "slot": slot_name,
+            "result": result,
+        },
+    )
+
+
 def lambda_handler(event, context):
     # Preflight CORS
     if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
@@ -443,6 +489,8 @@ def lambda_handler(event, context):
         if not filename:
             return response(400, {"success": False, "message": "filename es requerido"})
         return create_upload_url(slot=slot, filename=filename, content_type=content_type)
+    if action == "validate_slot":
+        return handle_validate_slot(body)
 
     documents = body.get("documents") or {}
     expedient_id = body.get("expedient_id")
@@ -461,26 +509,25 @@ def lambda_handler(event, context):
 
     extraction_results: Dict[str, Dict[str, Any]] = {}
 
-    for slot in required_slots:
-        doc = documents.get(slot) or {}
-        filename = doc.get("filename")
-        has_base64 = bool(doc.get("content_base64"))
-        has_s3_ref = bool(doc.get("s3_key"))
-
-        if not filename or (not has_base64 and not has_s3_ref):
-            extraction_results[slot] = {
-                "document_valid": False,
-                "plate": None,
-                "serial": None,
-                "reason": "Documento no suministrado correctamente",
-            }
-            continue
-
-        extraction_results[slot] = invoke_bedrock_json_extractor(
-            slot=slot,
-            filename=filename,
-            document=doc,
-        )
+    max_workers = max(1, min(SLOT_VALIDATION_MAX_WORKERS, len(required_slots)))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_by_slot = {
+            executor.submit(process_slot, slot, documents.get(slot) or {}): slot
+            for slot in required_slots
+        }
+        for future in as_completed(future_by_slot):
+            slot = future_by_slot[future]
+            try:
+                resolved_slot, result = future.result()
+                extraction_results[resolved_slot] = result
+            except Exception as exc:
+                logger.exception("Error en procesamiento paralelo para slot=%s", slot)
+                extraction_results[slot] = {
+                    "document_valid": False,
+                    "plate": None,
+                    "serial": None,
+                    "reason": f"Error procesando documento: {str(exc)}",
+                }
 
     # Normalizar valores extraídos
     invoice_plate = normalize_plate(extraction_results["invoice"].get("plate"))

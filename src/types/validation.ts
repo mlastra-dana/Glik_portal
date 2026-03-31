@@ -37,6 +37,14 @@ export interface ValidationResult {
   messages: string[];
 }
 
+export interface SlotValidationResult {
+  slot: DocumentType;
+  document_valid: boolean;
+  plate: string | null;
+  serial: string | null;
+  reason: string | null;
+}
+
 export interface ValidationChecklistItem {
   id: string;
   label: string;
