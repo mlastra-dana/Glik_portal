@@ -16,7 +16,6 @@ logger.setLevel(logging.INFO)
 
 AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 DOCUMENTS_BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET_NAME", "")
 EXTRACTIONS_BUCKET_NAME = os.environ.get("EXTRACTIONS_BUCKET_NAME", DOCUMENTS_BUCKET_NAME)
 SLOT_VALIDATION_MAX_WORKERS = int(os.environ.get("SLOT_VALIDATION_MAX_WORKERS", "4"))
@@ -40,19 +39,12 @@ textract = boto3.client(
 )
 
 
-def cors_headers() -> Dict[str, str]:
-    return {
-        "Content-Type": "application/json",
-        "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-        "Access-Control-Allow-Headers": "Content-Type,Authorization",
-        "Access-Control-Allow-Methods": "OPTIONS,POST",
-    }
-
-
 def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "statusCode": status_code,
-        "headers": cors_headers(),
+        "headers": {
+            "Content-Type": "application/json",
+        },
         "body": json.dumps(body, ensure_ascii=False),
     }
 
@@ -900,7 +892,6 @@ def lambda_handler(event, context):
     if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
         return {
             "statusCode": 200,
-            "headers": cors_headers(),
             "body": "",
         }
 
