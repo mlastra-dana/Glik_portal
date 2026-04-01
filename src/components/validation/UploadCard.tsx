@@ -55,14 +55,13 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
   };
 
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
+    <article className="rounded-2xl border border-slate-200/90 bg-white p-4 shadow-soft sm:p-5">
       <div className="flex items-start justify-between gap-4">
         <div className="flex items-start gap-3">
           <div className="rounded-lg bg-purple-50 p-2 text-glik-primary">{iconByDocument[document.type]}</div>
           <div>
             <h3 className="text-base font-bold text-glik-secondary">{document.label}</h3>
-            <p className="mt-1 text-xs text-slate-600">{document.description}</p>
-            <p className="mt-1 text-[11px] text-slate-500">Formato permitido: {document.acceptedFormats}</p>
+            <p className="mt-1 text-[11px] font-medium text-slate-500">Formato: {document.acceptedFormats}</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -89,10 +88,10 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
       <button
         type="button"
         onClick={handleOpenFilePicker}
-        className="mt-4 flex w-full items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-left transition hover:border-glik-primary hover:bg-purple-50/60"
+        className="mt-3 flex w-full items-center justify-between rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-left transition hover:border-glik-primary hover:bg-purple-50/50"
       >
         <span className="text-sm font-medium text-slate-700">
-          {document.fileName ? document.fileName : 'Seleccione o arrastre el archivo correspondiente'}
+          {document.fileName ? document.fileName : 'Seleccionar archivo'}
         </span>
         <span className="text-xs font-semibold text-glik-primary">
           {document.fileName ? 'Reemplazar' : 'Subir'}

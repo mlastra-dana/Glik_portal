@@ -7,8 +7,8 @@ interface ValidationChecklistProps {
 const ValidationChecklist = ({ items }: ValidationChecklistProps) => {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
-      <h3 className="font-display text-lg font-bold text-glik-secondary">Checklist de validación</h3>
-      <ul className="mt-4 space-y-3">
+      <h3 className="font-display text-lg font-bold text-glik-secondary">Checklist</h3>
+      <ul className="mt-3 space-y-2.5">
         {items.map((item) => (
           <li key={item.id} className="flex items-center justify-between rounded-xl bg-slate-50 p-3">
             <span className="text-sm font-medium text-slate-700">{item.label}</span>

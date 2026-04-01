@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom';
 import ProcessStepper from '../components/validation/ProcessStepper';
 import ResultPanel from '../components/validation/ResultPanel';
 import UploadCard from '../components/validation/UploadCard';
-import EmptyState from '../components/ui/EmptyState';
 import { documentSlotsSeed } from '../mocks/documents';
 import { compareExpedient, toValidationResult, validateDocuments, validateImages } from '../services/api';
 import { SlotExtraction } from '../types/api';
@@ -316,9 +315,7 @@ const ValidationPortalPage = () => {
         <div className="flex items-start justify-between gap-3 px-1">
           <div>
             <h1 className="font-display text-xl font-bold text-white sm:text-2xl">Validación logística de expediente</h1>
-            <p className="mt-1 text-sm text-purple-100">
-              Cargue soportes de unidad y ejecute validación por fases para confirmar placa y serial del expediente.
-            </p>
+            <p className="mt-1 text-sm text-purple-100">Control de documentos y evidencias de motocicleta.</p>
           </div>
           <Link
             to="/"
@@ -331,8 +328,9 @@ const ValidationPortalPage = () => {
       </div>
 
       <div className="mt-5 space-y-5">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-          <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setActiveScreen('documents')}
@@ -350,45 +348,46 @@ const ValidationPortalPage = () => {
             >
               Imágenes
             </button>
-          </div>
-          <p className="mb-4 text-sm text-slate-600">
-            {activeScreen === 'documents'
-              ? 'Pantalla 1: cargue y valide Factura y Certificado de origen.'
-              : 'Pantalla 2: cargue y valide Fotoplaca y Fotoserial.'}
-          </p>
-          <div className="flex flex-wrap items-center gap-2">
-            {activeScreen === 'documents' ? (
-              <button
-                type="button"
-                onClick={handleValidateDocuments}
-                disabled={!canValidateDocuments}
-                className={`btn-primary ${!canValidateDocuments ? 'cursor-not-allowed opacity-50' : ''}`}
-              >
-                {phaseLoading.validateDocuments ? 'Validando documentos...' : 'Validar documentos'}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {activeScreen === 'documents' ? (
+                <button
+                  type="button"
+                  onClick={handleValidateDocuments}
+                  disabled={!canValidateDocuments}
+                  className={`btn-primary ${!canValidateDocuments ? 'cursor-not-allowed opacity-50' : ''}`}
+                >
+                  {phaseLoading.validateDocuments ? 'Validando documentos...' : 'Validar documentos'}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleValidateImages}
+                  disabled={!canValidateImages}
+                  className={`btn-primary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
+                >
+                  {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
+                </button>
+              )}
+              <button type="button" onClick={handleResetFlow} className="btn-secondary">
+                Reiniciar flujo
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleValidateImages}
-                disabled={!canValidateImages}
-                className={`btn-primary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
-              >
-                {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
-              </button>
-            )}
-            <button type="button" onClick={handleResetFlow} className="btn-secondary">
-              Reiniciar flujo
-            </button>
+            </div>
           </div>
-          <div className="mt-3 text-sm text-slate-600">
-            {Object.values(uploadingBySlot).some(Boolean) ? <p>Subiendo archivo...</p> : null}
-            {phaseLoading.compare ? <p>Comparando expediente...</p> : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">
+              {activeScreen === 'documents' ? 'Paso 1: Factura y Certificado' : 'Paso 2: Fotoplaca y Fotoserial'}
+            </span>
             {!isProcessing && activeScreen === 'documents' && !canValidateDocuments ? (
-              <p>Cargue Factura y Certificado para iniciar validación.</p>
+              <span className="text-slate-500">Cargue ambos soportes para validar.</span>
             ) : null}
             {!isProcessing && activeScreen === 'images' && !canValidateImages ? (
-              <p>Cargue Fotoplaca y Fotoserial para iniciar validación.</p>
+              <span className="text-slate-500">Cargue ambas evidencias para validar.</span>
             ) : null}
+          </div>
+          <div className="mt-2 text-sm text-slate-600">
+            {Object.values(uploadingBySlot).some(Boolean) ? <p>Subiendo archivo...</p> : null}
+            {phaseLoading.compare ? <p>Comparando expediente...</p> : null}
           </div>
           {isProcessing ? (
             <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -479,12 +478,6 @@ const ValidationPortalPage = () => {
           </div>
         ) : null}
 
-        {!isProcessing && !result ? (
-          <EmptyState
-            title="Resultado pendiente"
-            description="Cargue soportes, ejecute validación documental e imágenes, y luego se comparará automáticamente el expediente."
-          />
-        ) : null}
         {!isProcessing && result ? <ResultPanel result={result} onReset={handleResetFlow} /> : null}
       </div>
     </section>

@@ -36,7 +36,7 @@
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center rounded-xl bg-glik-secondary px-5 py-2.5 text-sm font-semibold text-white shadow-card transition hover:bg-glik-secondaryStrong;
+    @apply inline-flex items-center justify-center rounded-xl bg-glik-secondary px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-glik-secondaryStrong;
   }
 
   .btn-secondary {

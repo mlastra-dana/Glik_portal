@@ -53,12 +53,9 @@ const ResultPanel = ({ result, onReset }: ResultPanelProps) => {
       <ValidationChecklist items={checklist} />
 
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
-        <h3 className="font-display text-lg font-bold text-glik-secondary">Observaciones y decisión</h3>
-        <p className="mt-1 text-sm text-slate-600">
-          Revise los hallazgos antes de continuar con el procesamiento del expediente.
-        </p>
+        <h3 className="font-display text-lg font-bold text-glik-secondary">Observaciones</h3>
 
-        <ul className="mt-4 space-y-2 text-sm text-slate-700">
+        <ul className="mt-3 space-y-2 text-sm text-slate-700">
           {result.messages.map((message, index) => (
             <li key={`${message}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               {message}
@@ -75,7 +72,7 @@ const ResultPanel = ({ result, onReset }: ResultPanelProps) => {
             className={`btn-primary ${canContinue ? '' : 'cursor-not-allowed opacity-50'}`}
             disabled={!canContinue}
           >
-            Continuar procesamiento
+            Continuar
           </button>
           {needsManualReview ? (
             <button type="button" className="btn-primary bg-rose-600 hover:bg-rose-700">
