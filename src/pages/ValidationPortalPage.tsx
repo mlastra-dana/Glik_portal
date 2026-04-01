@@ -56,8 +56,6 @@ const ValidationPortalPage = () => {
     validateImages: false
   });
   const [progressValue, setProgressValue] = useState(0);
-  const [lastAutoDocumentsSignature, setLastAutoDocumentsSignature] = useState('');
-  const [lastAutoImagesSignature, setLastAutoImagesSignature] = useState('');
 
   const filesBySlot = useMemo(
     () =>
@@ -70,8 +68,6 @@ const ValidationPortalPage = () => {
   const hasAnyDocument = documents.some((document) => Boolean(document.file));
   const isProcessing = Object.values(uploadingBySlot).some(Boolean) || Object.values(phaseLoading).some(Boolean);
   const currentStep: 1 | 2 | 3 = result ? 3 : hasAnyDocument || isProcessing ? 2 : 1;
-  const documentsSignature = `${filesBySlot.invoice?.name ?? ''}|${filesBySlot.certificate_of_origin?.name ?? ''}`;
-  const imagesSignature = `${filesBySlot.photo_plate?.name ?? ''}|${filesBySlot.photo_serial?.name ?? ''}`;
 
   const canValidateDocuments = useMemo(
     () =>
@@ -95,13 +91,6 @@ const ValidationPortalPage = () => {
       ? 'Validando imágenes...'
       : phaseLoading.compare
         ? 'Comparando expediente...'
-        : '';
-  const activePhaseDetail = phaseLoading.validateDocuments
-    ? 'Procesando Factura y Certificado de origen.'
-    : phaseLoading.validateImages
-      ? 'Procesando Fotoplaca y Fotoserial.'
-      : phaseLoading.compare
-        ? 'Consolidando coincidencia de placa y serial.'
         : '';
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
@@ -259,38 +248,8 @@ const ValidationPortalPage = () => {
       validateDocuments: false,
       validateImages: false
     });
-    setLastAutoDocumentsSignature('');
-    setLastAutoImagesSignature('');
     setActiveScreen('documents');
   };
-
-  useEffect(() => {
-    const runAutoDocumentsValidation = async () => {
-      if (!canValidateDocuments || phaseCompleted.validateDocuments) {
-        return;
-      }
-      if (documentsSignature === lastAutoDocumentsSignature) {
-        return;
-      }
-      setLastAutoDocumentsSignature(documentsSignature);
-      await handleValidateDocuments();
-    };
-    void runAutoDocumentsValidation();
-  }, [canValidateDocuments, documentsSignature, lastAutoDocumentsSignature, phaseCompleted.validateDocuments]);
-
-  useEffect(() => {
-    const runAutoImagesValidation = async () => {
-      if (!canValidateImages || phaseCompleted.validateImages) {
-        return;
-      }
-      if (imagesSignature === lastAutoImagesSignature) {
-        return;
-      }
-      setLastAutoImagesSignature(imagesSignature);
-      await handleValidateImages();
-    };
-    void runAutoImagesValidation();
-  }, [canValidateImages, imagesSignature, lastAutoImagesSignature, phaseCompleted.validateImages]);
 
   useEffect(() => {
     if (!isProcessing) {
@@ -331,23 +290,23 @@ const ValidationPortalPage = () => {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveScreen('documents')}
-              className={`btn-secondary ${activeScreen === 'documents' ? 'bg-purple-100 text-glik-primary' : ''}`}
-            >
-              Documentos
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveScreen('images')}
-              disabled={!canOpenImagesScreen}
-              className={`btn-secondary ${
-                activeScreen === 'images' ? 'bg-purple-100 text-glik-primary' : ''
-              } ${!canOpenImagesScreen ? 'cursor-not-allowed opacity-50' : ''}`}
-            >
-              Imágenes
-            </button>
+              <button
+                type="button"
+                onClick={() => setActiveScreen('documents')}
+                className={`btn-secondary ${activeScreen === 'documents' ? 'bg-purple-100 text-glik-primary' : ''}`}
+              >
+                Documentos
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveScreen('images')}
+                disabled={!canOpenImagesScreen}
+                className={`btn-secondary ${
+                  activeScreen === 'images' ? 'bg-purple-100 text-glik-primary' : ''
+                } ${!canOpenImagesScreen ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                Imágenes
+              </button>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               {activeScreen === 'documents' ? (
@@ -401,7 +360,6 @@ const ValidationPortalPage = () => {
                   style={{ width: `${progressValue}%` }}
                 />
               </div>
-              {activePhaseDetail ? <p className="mt-2 text-xs text-slate-600">{activePhaseDetail}</p> : null}
             </div>
           ) : null}
           {phaseErrors.upload ? <p className="mt-2 text-sm text-rose-700">Error de carga: {phaseErrors.upload}</p> : null}
@@ -462,18 +420,42 @@ const ValidationPortalPage = () => {
         {Object.keys(rawExtractions).length > 0 ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
             <h3 className="font-display text-lg font-bold text-glik-secondary">Extracción detectada</h3>
-            <p className="mt-1 text-sm text-slate-600">Valores detectados por soporte para control operativo del expediente.</p>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {documents.map((doc) => {
-                const extraction = rawExtractions[doc.type];
-                return (
-                  <div key={doc.type} className="rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm">
-                    <p className="font-semibold text-slate-800">{doc.label}</p>
-                    <p className="mt-1 text-slate-600">Placa detectada: {extraction?.plate ?? 'No detectada'}</p>
-                    <p className="text-slate-600">Serial detectado: {extraction?.serial ?? 'No detectado'}</p>
-                  </div>
-                );
-              })}
+            <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
+              <table className="w-full min-w-[640px] border-collapse text-sm">
+                <thead className="bg-slate-50">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Soporte</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Placa</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Serial</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-600">Estado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {documents.map((doc) => {
+                    const extraction = rawExtractions[doc.type];
+                    const plate = extraction?.plate ?? '';
+                    const serial = extraction?.serial ?? '';
+                    const isDetected = Boolean(extraction?.document_valid);
+
+                    return (
+                      <tr key={doc.type} className="border-t border-slate-200 bg-white">
+                        <td className="px-4 py-3 font-medium text-slate-800">{doc.label}</td>
+                        <td className="px-4 py-3 font-mono text-slate-700">{plate || '-'}</td>
+                        <td className="px-4 py-3 font-mono text-slate-700">{serial || '-'}</td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${
+                              isDetected ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'
+                            }`}
+                          >
+                            {isDetected ? 'Detectado' : 'Sin dato'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
         ) : null}

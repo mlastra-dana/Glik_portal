@@ -180,13 +180,6 @@ const validateSingleSlot = async (slot: DocumentType, file: File): Promise<SlotE
   }
 };
 
-const aggregateMatch = (values: Array<boolean | null>): boolean | null => {
-  const filtered = values.filter((value): value is boolean => value !== null);
-  if (filtered.length === 0) return null;
-  if (filtered.includes(false)) return false;
-  return true;
-};
-
 const compareTwo = (a?: string | null, b?: string | null, mode: 'plate' | 'serial' = 'plate'): boolean | null => {
   if (!a || !b) return null;
   if (mode === 'plate') return normalizePlate(a) === normalizePlate(b);
@@ -210,16 +203,11 @@ const compareInFrontend = (
   const certificateSerial = normalizeSerial(certificate?.serial);
   const imageSerial = normalizeSerial(photoSerial?.serial);
 
-  const plateMatch = aggregateMatch([
-    compareTwo(invoicePlate, certificatePlate, 'plate'),
-    compareTwo(invoicePlate, imagePlate, 'plate'),
-    compareTwo(certificatePlate, imagePlate, 'plate')
-  ]);
-  const serialMatch = aggregateMatch([
-    compareTwo(invoiceSerial, certificateSerial, 'serial'),
-    compareTwo(invoiceSerial, imageSerial, 'serial'),
-    compareTwo(certificateSerial, imageSerial, 'serial')
-  ]);
+  // Regla de negocio principal:
+  // 1) Fotoplaca vs placa del certificado
+  // 2) Fotoserial vs serial del certificado
+  const plateMatch = compareTwo(certificatePlate, imagePlate, 'plate');
+  const serialMatch = compareTwo(certificateSerial, imageSerial, 'serial');
 
   const invoiceValid = Boolean(invoice?.document_valid);
   const certificateValid = Boolean(certificate?.document_valid);
@@ -244,17 +232,17 @@ const compareInFrontend = (
   messages.push(photoSerialValid ? 'El fotoserial es válido.' : `Fotoserial: ${photoSerial?.reason ?? 'No válido.'}`);
   messages.push(
     plateMatch === true
-      ? 'La placa coincide entre soportes.'
+      ? 'La placa de fotoplaca coincide con el certificado de origen.'
       : plateMatch === false
-        ? 'La placa no coincide entre soportes.'
-        : 'No hay datos suficientes de placa para comparar.'
+        ? 'La placa de fotoplaca no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar placa (certificado/fotoplaca).'
   );
   messages.push(
     serialMatch === true
-      ? 'El serial coincide entre soportes.'
+      ? 'El serial de fotoserial coincide con el certificado de origen.'
       : serialMatch === false
-        ? 'El serial no coincide entre soportes.'
-        : 'No hay datos suficientes de serial para comparar.'
+        ? 'El serial de fotoserial no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar serial (certificado/fotoserial).'
   );
 
   return {

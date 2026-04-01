@@ -93,9 +93,7 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
         <span className="text-sm font-medium text-slate-700">
           {document.fileName ? document.fileName : 'Seleccionar archivo'}
         </span>
-        <span className="text-xs font-semibold text-glik-primary">
-          {document.fileName ? 'Reemplazar' : 'Subir'}
-        </span>
+        <span className="text-xs font-semibold text-glik-primary">{document.fileName ? 'Reemplazar' : 'Subir'}</span>
       </button>
 
       <input
