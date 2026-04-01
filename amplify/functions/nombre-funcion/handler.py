@@ -193,6 +193,15 @@ def is_valid_vin(vin: Optional[str]) -> bool:
     return normalized[8] == check_digit
 
 
+def is_vin_like(vin: Optional[str]) -> bool:
+    if not vin or not isinstance(vin, str):
+        return False
+    normalized = normalize_serial(vin)
+    if not normalized:
+        return False
+    return bool(VIN_REGEX.fullmatch(normalized))
+
+
 def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
     normalized_result = {
         "document_valid": bool(result.get("document_valid")),
@@ -201,8 +210,8 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
         "reason": result.get("reason"),
     }
 
-    # Regla de negocio: en factura solo aceptamos VIN real (17 + checksum).
-    # Si no es VIN válido, preferimos null para evitar falsos positivos.
+    # Regla de negocio: en factura NO se muestra serial dudoso.
+    # Si no es VIN válido (incluyendo dígito verificador), se devuelve null.
     if slot == "invoice":
         invoice_serial = normalized_result.get("serial")
         if not is_valid_vin(invoice_serial):
@@ -355,8 +364,12 @@ Reglas de extracción:
   Aceptar serial solo cuando esté asociado a etiquetas de identificación vehicular.
   Si el documento tiene tabla con columnas "VIN" y "Motor", el serial debe salir de la columna "VIN" de la línea del producto.
   Nunca usar la columna "Motor" como serial cuando exista "VIN".
+  En facturas con cabecera de detalle tipo "Ref.Fab | Descripción | Cant | UM | VIN | Motor ...":
+  leer únicamente el valor de la celda bajo "VIN" en la misma fila del producto.
+  No concatenar texto de celdas vecinas ni tomar texto fuera de esa columna.
   Si el valor VIN no tiene 17 caracteres alfanuméricos claros, devolver serial = null.
-  Si el VIN no pasa validación de dígito verificador (ISO 3779, posición 9), devolver serial = null.
+  Si el VIN no pasa validación de dígito verificador (ISO 3779, posición 9), mantenerlo igual si es claramente legible
+  (puede haber ruido OCR en un carácter).
   Si no hay etiqueta clara de vehículo, devolver serial = null.
 
 Reglas de descarte:
@@ -364,6 +377,7 @@ Reglas de descarte:
   número de factura (supplier_invoice_number), códigos de producto (product_id), cantidades/precios y líneas de detalle.
 - Nunca usar como serial campos administrativos aunque parezcan alfanuméricos.
 - No confundir serial/VIN con número de factura, control interno, referencia comercial o código de cliente.
+- Ignorar textos de marca de agua/fondo y artefactos OCR fuera de la tabla de detalle.
 - Manejar ambigüedades OCR frecuentes: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
 
 reason:
