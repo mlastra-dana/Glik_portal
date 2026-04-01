@@ -32,6 +32,11 @@ bedrock = boto3.client(
     config=Config(read_timeout=300, connect_timeout=10, retries={"max_attempts": 2}),
 )
 s3 = boto3.client("s3", region_name=AWS_REGION)
+textract = boto3.client(
+    "textract",
+    region_name=AWS_REGION,
+    config=Config(read_timeout=60, connect_timeout=10, retries={"max_attempts": 2}),
+)
 
 
 def cors_headers() -> Dict[str, str]:
@@ -143,6 +148,19 @@ def normalize_serial(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def normalize_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def extract_vin_candidates(text: Optional[str]) -> list[str]:
+    normalized = normalize_text(text).upper()
+    if not normalized:
+        return []
+    return re.findall(r"\b[A-HJ-NPR-Z0-9]{17}\b", normalized)
+
+
 VIN_TRANSLITERATION = {
     "A": 1,
     "B": 2,
@@ -202,6 +220,130 @@ def is_vin_like(vin: Optional[str]) -> bool:
     return bool(VIN_REGEX.fullmatch(normalized))
 
 
+def get_block_text(block: Dict[str, Any], block_map: Dict[str, Dict[str, Any]]) -> str:
+    words: list[str] = []
+    for rel in block.get("Relationships", []):
+        if rel.get("Type") != "CHILD":
+            continue
+        for child_id in rel.get("Ids", []):
+            child = block_map.get(child_id)
+            if not child:
+                continue
+            child_type = child.get("BlockType")
+            if child_type == "WORD":
+                text = child.get("Text")
+                if text:
+                    words.append(text)
+            elif child_type == "SELECTION_ELEMENT" and child.get("SelectionStatus") == "SELECTED":
+                words.append("X")
+    return normalize_text(" ".join(words))
+
+
+def extract_invoice_fields_with_textract(file_bytes: bytes) -> Dict[str, Optional[str]]:
+    """
+    Prioriza extracción de VIN/placa desde estructura de tabla en factura.
+    """
+    result: Dict[str, Optional[str]] = {"plate": None, "serial": None}
+    try:
+        resp = textract.analyze_document(
+            Document={"Bytes": file_bytes},
+            FeatureTypes=["TABLES", "FORMS"],
+        )
+    except Exception as exc:
+        logger.warning("Textract no disponible para factura: %s", exc)
+        return result
+
+    blocks = resp.get("Blocks", [])
+    if not blocks:
+        return result
+    block_map = {b.get("Id"): b for b in blocks if b.get("Id")}
+
+    for table in [b for b in blocks if b.get("BlockType") == "TABLE"]:
+        child_ids: list[str] = []
+        for rel in table.get("Relationships", []):
+            if rel.get("Type") == "CHILD":
+                child_ids.extend(rel.get("Ids", []))
+        cells = [block_map.get(cid) for cid in child_ids]
+        cells = [c for c in cells if c and c.get("BlockType") == "CELL"]
+        if not cells:
+            continue
+
+        rows: Dict[int, Dict[int, str]] = {}
+        for cell in cells:
+            row_idx = int(cell.get("RowIndex", 0))
+            col_idx = int(cell.get("ColumnIndex", 0))
+            if row_idx <= 0 or col_idx <= 0:
+                continue
+            rows.setdefault(row_idx, {})[col_idx] = get_block_text(cell, block_map)
+        if not rows:
+            continue
+
+        header_idx = min(rows.keys())
+        header = rows.get(header_idx, {})
+        vin_col = None
+        plate_col = None
+        for col_idx, label in header.items():
+            upper = normalize_text(label).upper()
+            if "VIN" in upper:
+                vin_col = col_idx
+            if "PLACA" in upper:
+                plate_col = col_idx
+
+        if vin_col is None and plate_col is None:
+            continue
+
+        for row_idx in sorted(rows.keys()):
+            if row_idx <= header_idx:
+                continue
+            row = rows[row_idx]
+
+            if vin_col is not None and not result["serial"]:
+                vin_cell = row.get(vin_col)
+                candidates = extract_vin_candidates(vin_cell)
+                valid = next((c for c in candidates if is_valid_vin(c)), None)
+                if valid:
+                    result["serial"] = normalize_serial(valid)
+                elif candidates:
+                    result["serial"] = normalize_serial(candidates[0])
+
+            if plate_col is not None and not result["plate"]:
+                plate_cell = row.get(plate_col)
+                plate = normalize_plate(plate_cell)
+                if plate:
+                    result["plate"] = plate
+
+            if result["serial"] and result["plate"]:
+                return result
+
+    if not result["serial"]:
+        for line in [b for b in blocks if b.get("BlockType") == "LINE"]:
+            line_text = normalize_text(line.get("Text"))
+            if "VIN" not in line_text.upper():
+                continue
+            candidates = extract_vin_candidates(line_text)
+            valid = next((c for c in candidates if is_valid_vin(c)), None)
+            if valid:
+                result["serial"] = normalize_serial(valid)
+                break
+            if candidates:
+                result["serial"] = normalize_serial(candidates[0])
+                break
+
+    return result
+
+
+def merge_invoice_textract_hint(model_result: Dict[str, Any], textract_hint: Dict[str, Optional[str]]) -> Dict[str, Any]:
+    merged = dict(model_result)
+    hint_serial = normalize_serial(textract_hint.get("serial"))
+    hint_plate = normalize_plate(textract_hint.get("plate"))
+
+    if hint_serial:
+        merged["serial"] = hint_serial
+    if hint_plate and not merged.get("plate"):
+        merged["plate"] = hint_plate
+    return merged
+
+
 def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
     normalized_result = {
         "document_valid": bool(result.get("document_valid")),
@@ -217,7 +359,7 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
         if not is_valid_vin(invoice_serial):
             normalized_result["serial"] = None
             if normalized_result["document_valid"]:
-                normalized_result["reason"] = "Factura válida sin serial"
+                normalized_result["reason"] = "Factura válida sin serial (VIN no legible o OCR ambiguo)"
 
     return normalized_result
 
@@ -297,6 +439,9 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
     user_message = make_user_message(slot, filename, file_bytes)
 
     system_prompt = build_system_prompt(slot)
+    invoice_textract_hint: Dict[str, Optional[str]] = {"plate": None, "serial": None}
+    if slot == "invoice":
+        invoice_textract_hint = extract_invoice_fields_with_textract(file_bytes)
 
     try:
         resp = bedrock.converse(
@@ -311,9 +456,19 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
         )
         raw_text = extract_text_from_bedrock_response(resp)
         logger.info("Respuesta Bedrock slot=%s raw=%s", slot, raw_text)
-        return safe_json_loads(raw_text)
+        parsed = safe_json_loads(raw_text)
+        if slot == "invoice":
+            parsed = merge_invoice_textract_hint(parsed, invoice_textract_hint)
+        return parsed
     except (ClientError, BotoCoreError, ValueError, json.JSONDecodeError) as exc:
         logger.exception("Error invocando Bedrock para slot=%s", slot)
+        if slot == "invoice" and invoice_textract_hint.get("serial"):
+            return {
+                "document_valid": True,
+                "plate": invoice_textract_hint.get("plate"),
+                "serial": invoice_textract_hint.get("serial"),
+                "reason": "Factura válida (extraída con Textract)",
+            }
         return {
             "document_valid": False,
             "plate": None,
