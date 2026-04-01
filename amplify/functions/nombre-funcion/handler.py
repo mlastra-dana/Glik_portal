@@ -271,6 +271,11 @@ Reglas:
 - Si la factura no tiene placa o serial, devolver null en el campo faltante.
 - No confundas placa con VIN, serial, número de factura o póliza.
 - Si el documento no es factura, document_valid = false.
+- Para extraer placa, prioriza campos cercanos a etiquetas como: "PLACA", "PLACA VEHÍCULO", "PLACA DEL VEHÍCULO".
+- Ignora valores de campos como: "NRO FACTURA", "NRO CONTROL", "PÓLIZA", "RIF", "CLIENTE", "CÓDIGO".
+- Maneja ambigüedades OCR frecuentes en placas: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
+- Si hay más de una placa candidata, elige la que esté más claramente asociada al vehículo de la factura.
+- No inventes placa ni serial si no están legibles.
 - reason debe contener una frase corta:
   - "Factura válida"
   - "No corresponde a una factura"
@@ -308,6 +313,13 @@ Reglas:
 - serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
 - Si el certificado no tiene placa o serial, devolver null en el campo faltante.
 - Si el documento no es certificado de origen, document_valid = false.
+- Este documento es la fuente prioritaria para placa/serial del expediente.
+- Para placa, prioriza campos cercanos a etiquetas como: "PLACA", "PLACA DEL VEHÍCULO", "IDENTIFICACIÓN VEHÍCULO".
+- Para serial, prioriza "VIN", "N° CHASIS", "SERIAL MOTOR", "SERIAL CARROCERÍA".
+- Ignora números administrativos (acta, consecutivo, control, póliza, RIF, referencia).
+- Maneja ambigüedades OCR frecuentes en placa y serial: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
+- Si hay múltiples candidatos, elige el más consistente con etiquetas de identificación del vehículo.
+- No inventes placa ni serial si no están legibles.
 - reason debe contener una frase corta:
   - "Certificado válido"
   - "No corresponde a un certificado de origen"

@@ -96,13 +96,13 @@ type DocumentSlot = Extract<DocumentType, 'invoice' | 'certificate_of_origin'>;
 type ImageSlot = Extract<DocumentType, 'photo_plate' | 'photo_serial'>;
 
 type SlotValidationPayload = {
-  fileBase64: string;
-  fileName: string;
-  contentType: string;
-  expectedDocumentType?: string;
-  slotExpected?: string;
-  documentTypeExpected?: string;
-  requestedCategory?: string;
+  action: 'validate_slot';
+  slot: DocumentType;
+  document: {
+    filename: string;
+    content_base64: string;
+    content_type: string;
+  };
 };
 
 const slotExpectedMap: Record<DocumentType, string> = {
@@ -119,26 +119,77 @@ const slotLabelMap: Record<DocumentType, string> = {
   photo_serial: 'Fotoserial'
 };
 
-const buildSlotPayload = async (slot: DocumentType, file: File): Promise<SlotValidationPayload> => {
-  const base64 = await toBase64(file);
-  const slotExpected = slotExpectedMap[slot];
+const extractPlateHintFromFilename = (filename?: string | null): string | null => {
+  if (!filename) return null;
+  const base = filename.toUpperCase().replace(/\.[A-Z0-9]+$/, '');
+  const compact = base.replace(/[^A-Z0-9]/g, '');
+  if (!compact) return null;
 
-  if (slot === 'invoice' || slot === 'certificate_of_origin') {
-    return {
-      fileBase64: base64,
-      fileName: file.name,
-      contentType: file.type || 'application/octet-stream',
-      expectedDocumentType: slotExpected,
-      slotExpected,
-      documentTypeExpected: slotExpected
-    };
+  // Busca placas candidatas de 6-7 caracteres alfanuméricos.
+  const matches = compact.match(/[A-Z0-9]{6,7}/g);
+  if (!matches || matches.length === 0) return null;
+
+  const candidate = matches.find((value) => /[A-Z]/.test(value) && /\d/.test(value)) ?? matches[0];
+  const normalized = normalizePlate(candidate);
+  return normalized ?? null;
+};
+
+const levenshteinDistance = (a: string, b: string): number => {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  const curr = new Array<number>(b.length + 1).fill(0);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    curr[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(
+        prev[j] + 1, // eliminación
+        curr[j - 1] + 1, // inserción
+        prev[j - 1] + cost // sustitución
+      );
+    }
+    for (let j = 0; j <= b.length; j += 1) {
+      prev[j] = curr[j];
+    }
   }
+  return prev[b.length];
+};
+
+const isLikelyPlateOcrVariant = (detected: string, hint: string): boolean => {
+  if (detected.length !== hint.length) return false;
+  if (detected.length < 6 || detected.length > 7) return false;
+  if (detected.slice(0, 2) !== hint.slice(0, 2)) return false;
+  if (detected.slice(-1) !== hint.slice(-1)) return false;
+  return levenshteinDistance(detected, hint) <= 3;
+};
+
+const applyFilenamePlateHint = (slotResult: SlotExtraction, filename?: string | null): SlotExtraction => {
+  const hintPlate = extractPlateHintFromFilename(filename);
+  const detectedPlate = normalizePlate(slotResult.plate);
+  if (!hintPlate || !detectedPlate || detectedPlate === hintPlate) return slotResult;
+  if (!slotResult.document_valid) return slotResult;
+  if (!isLikelyPlateOcrVariant(detectedPlate, hintPlate)) return slotResult;
 
   return {
-    fileBase64: base64,
-    fileName: file.name,
-    contentType: file.type || 'application/octet-stream',
-    requestedCategory: slotExpected
+    ...slotResult,
+    plate: hintPlate
+  };
+};
+
+const buildSlotPayload = async (slot: DocumentType, file: File): Promise<SlotValidationPayload> => {
+  const base64 = await toBase64(file);
+  return {
+    action: 'validate_slot',
+    slot,
+    document: {
+      filename: file.name,
+      content_base64: base64,
+      content_type: file.type || 'application/octet-stream'
+    }
   };
 };
 
@@ -173,7 +224,9 @@ const validateSingleSlot = async (slot: DocumentType, file: File): Promise<SlotE
   try {
     const payload = await buildSlotPayload(slot, file);
     const response = (await postDirect<Record<string, unknown>>(payload, phaseTimeoutMs)) as Record<string, unknown>;
-    return mapSlotValidationToExtraction(slot, response);
+    const nestedResult =
+      typeof response.result === 'object' && response.result !== null ? (response.result as Record<string, unknown>) : response;
+    return mapSlotValidationToExtraction(slot, nestedResult);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error desconocido';
     throw new Error(`${slotLabelMap[slot]}: ${message}`);
@@ -277,10 +330,12 @@ export const validateDocuments = async (
   expedientId: string,
   filesBySlot: Record<DocumentSlot, File>
 ): Promise<ValidateDocumentsResponse> => {
-  const [invoice, certificate] = await Promise.all([
+  const [invoiceRaw, certificateRaw] = await Promise.all([
     validateSingleSlot('invoice', filesBySlot.invoice),
     validateSingleSlot('certificate_of_origin', filesBySlot.certificate_of_origin)
   ]);
+  const invoice = applyFilenamePlateHint(invoiceRaw, filesBySlot.invoice.name);
+  const certificate = applyFilenamePlateHint(certificateRaw, filesBySlot.certificate_of_origin.name);
 
   return {
     success: true,
