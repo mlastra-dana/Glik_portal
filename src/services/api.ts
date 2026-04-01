@@ -83,9 +83,11 @@ const postDirect = async <TResponse>(payload: Record<string, unknown>, timeoutMs
     'Se agotó el tiempo en la validación del archivo.'
   );
 
-  const body = (await response.json()) as TResponse & { success?: boolean; message?: string };
+  const body = (await response.json()) as TResponse & { success?: boolean; message?: string; error?: string };
   if (!response.ok || body.success === false) {
-    throw new Error(body.message ?? 'Error validando archivo.');
+    const baseMessage = body.message ?? 'Error validando archivo.';
+    const detail = body.error ? ` Detalle: ${body.error}` : '';
+    throw new Error(`${baseMessage}${detail}`);
   }
   return body as TResponse;
 };
@@ -108,6 +110,13 @@ const slotExpectedMap: Record<DocumentType, string> = {
   certificate_of_origin: 'CERTIFICATE_OF_ORIGIN',
   photo_plate: 'PHOTO_PLATE',
   photo_serial: 'PHOTO_SERIAL'
+};
+
+const slotLabelMap: Record<DocumentType, string> = {
+  invoice: 'Factura',
+  certificate_of_origin: 'Certificado de origen',
+  photo_plate: 'Fotoplaca',
+  photo_serial: 'Fotoserial'
 };
 
 const buildSlotPayload = async (slot: DocumentType, file: File): Promise<SlotValidationPayload> => {
@@ -161,9 +170,14 @@ const mapSlotValidationToExtraction = (slot: DocumentType, response: Record<stri
 };
 
 const validateSingleSlot = async (slot: DocumentType, file: File): Promise<SlotExtraction> => {
-  const payload = await buildSlotPayload(slot, file);
-  const response = (await postDirect<Record<string, unknown>>(payload, phaseTimeoutMs)) as Record<string, unknown>;
-  return mapSlotValidationToExtraction(slot, response);
+  try {
+    const payload = await buildSlotPayload(slot, file);
+    const response = (await postDirect<Record<string, unknown>>(payload, phaseTimeoutMs)) as Record<string, unknown>;
+    return mapSlotValidationToExtraction(slot, response);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Error desconocido';
+    throw new Error(`${slotLabelMap[slot]}: ${message}`);
+  }
 };
 
 const aggregateMatch = (values: Array<boolean | null>): boolean | null => {
