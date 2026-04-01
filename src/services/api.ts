@@ -126,6 +126,7 @@ type ImageSlot = Extract<DocumentType, 'photo_plate' | 'photo_serial'>;
 type SlotValidationPayload = {
   action: 'validate_slot';
   slot: DocumentType;
+  expedient_id?: string;
   document: {
     filename: string;
     content_base64: string;
@@ -208,11 +209,12 @@ const applyFilenamePlateHint = (slotResult: SlotExtraction, filename?: string | 
   };
 };
 
-const buildSlotPayload = async (slot: DocumentType, file: File): Promise<SlotValidationPayload> => {
+const buildSlotPayload = async (slot: DocumentType, file: File, expedientId?: string): Promise<SlotValidationPayload> => {
   const base64 = await toBase64(file);
   return {
     action: 'validate_slot',
     slot,
+    expedient_id: expedientId,
     document: {
       filename: file.name,
       content_base64: base64,
@@ -248,12 +250,23 @@ const mapSlotValidationToExtraction = (slot: DocumentType, response: Record<stri
   };
 };
 
-const validateSingleSlot = async (slot: DocumentType, file: File): Promise<SlotExtraction> => {
+const validateSingleSlot = async (slot: DocumentType, file: File, expedientId?: string): Promise<SlotExtraction> => {
   try {
-    const payload = await buildSlotPayload(slot, file);
+    const payload = await buildSlotPayload(slot, file, expedientId);
     const response = (await postDirect<Record<string, unknown>>(payload, phaseTimeoutMs)) as Record<string, unknown>;
-    const nestedResult =
-      typeof response.result === 'object' && response.result !== null ? (response.result as Record<string, unknown>) : response;
+    const frontendRequired =
+      typeof response.frontend_required === 'object' && response.frontend_required !== null
+        ? (response.frontend_required as Record<string, unknown>)
+        : null;
+    const frontendSlot =
+      frontendRequired && typeof frontendRequired[slot] === 'object' && frontendRequired[slot] !== null
+        ? (frontendRequired[slot] as Record<string, unknown>)
+        : null;
+    const nestedResult = frontendSlot
+      ? frontendSlot
+      : typeof response.result === 'object' && response.result !== null
+        ? (response.result as Record<string, unknown>)
+        : response;
     return mapSlotValidationToExtraction(slot, nestedResult);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Error desconocido';
@@ -386,16 +399,21 @@ export const validateDocuments = async (
   filesBySlot: Record<DocumentSlot, File>
 ): Promise<ValidateDocumentsResponse> => {
   const [invoiceRaw, certificateRaw] = await Promise.all([
-    validateSingleSlot('invoice', filesBySlot.invoice),
-    validateSingleSlot('certificate_of_origin', filesBySlot.certificate_of_origin)
+    validateSingleSlot('invoice', filesBySlot.invoice, expedientId),
+    validateSingleSlot('certificate_of_origin', filesBySlot.certificate_of_origin, expedientId)
   ]);
   const invoice = applyFilenamePlateHint(invoiceRaw, filesBySlot.invoice.name);
   const certificate = applyFilenamePlateHint(certificateRaw, filesBySlot.certificate_of_origin.name);
+  const frontendRequired = {
+    invoice,
+    certificate_of_origin: certificate
+  };
 
   return {
     success: true,
     expedient_id: expedientId,
     phase: 'documents',
+    frontend_required: frontendRequired,
     raw_extractions: {
       invoice,
       certificate_of_origin: certificate
@@ -408,14 +426,19 @@ export const validateImages = async (
   filesBySlot: Record<ImageSlot, File>
 ): Promise<ValidateImagesResponse> => {
   const [photoPlate, photoSerial] = await Promise.all([
-    validateSingleSlot('photo_plate', filesBySlot.photo_plate),
-    validateSingleSlot('photo_serial', filesBySlot.photo_serial)
+    validateSingleSlot('photo_plate', filesBySlot.photo_plate, expedientId),
+    validateSingleSlot('photo_serial', filesBySlot.photo_serial, expedientId)
   ]);
+  const frontendRequired = {
+    photo_plate: photoPlate,
+    photo_serial: photoSerial
+  };
 
   return {
     success: true,
     expedient_id: expedientId,
     phase: 'images',
+    frontend_required: frontendRequired,
     raw_extractions: {
       photo_plate: photoPlate,
       photo_serial: photoSerial

@@ -15,6 +15,24 @@ export interface PhaseResponseBase {
   expedient_id?: string;
   phase?: 'documents' | 'images';
   raw_extractions?: Partial<Record<DocumentType, SlotExtraction>>;
+  frontend_required?: Partial<Record<DocumentType, SlotExtraction>>;
+  persisted_extraction?: {
+    bucket: string;
+    key: string;
+  } | null;
+  persisted_extractions?: Partial<
+    Record<
+      DocumentType,
+      {
+        bucket: string;
+        key: string;
+      }
+    >
+  >;
+  persisted_summary?: {
+    bucket: string;
+    key: string;
+  } | null;
 }
 
 export interface ValidateDocumentsResponse extends PhaseResponseBase {}
@@ -44,4 +62,3 @@ export interface CompareExpedientResponse extends PhaseResponseBase {
   overall_status?: ExpeditionStatus | 'validated' | 'manual_review';
   messages?: string[];
 }
-

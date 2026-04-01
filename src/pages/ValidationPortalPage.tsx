@@ -202,7 +202,7 @@ const ValidationPortalPage = () => {
         invoice: filesBySlot.invoice as File,
         certificate_of_origin: filesBySlot.certificate_of_origin as File
       });
-      const phaseExtractions = response.raw_extractions ?? {};
+      const phaseExtractions = response.frontend_required ?? response.raw_extractions ?? {};
       const mergedExtractions = { ...rawExtractions, ...phaseExtractions };
       setRawExtractions(mergedExtractions);
       updateDocumentsFromExtractions(phaseExtractions);
@@ -230,7 +230,7 @@ const ValidationPortalPage = () => {
         photo_plate: filesBySlot.photo_plate as File,
         photo_serial: filesBySlot.photo_serial as File
       });
-      const phaseExtractions = response.raw_extractions ?? {};
+      const phaseExtractions = response.frontend_required ?? response.raw_extractions ?? {};
       const mergedExtractions = { ...rawExtractions, ...phaseExtractions };
       setRawExtractions(mergedExtractions);
       updateDocumentsFromExtractions(phaseExtractions);

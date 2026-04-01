@@ -18,6 +18,7 @@ AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
 BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "")
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 DOCUMENTS_BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET_NAME", "")
+EXTRACTIONS_BUCKET_NAME = os.environ.get("EXTRACTIONS_BUCKET_NAME", DOCUMENTS_BUCKET_NAME)
 SLOT_VALIDATION_MAX_WORKERS = int(os.environ.get("SLOT_VALIDATION_MAX_WORKERS", "4"))
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "260"))
 
@@ -59,6 +60,44 @@ def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
 def sanitize_filename(filename: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", filename.strip())
     return cleaned or "documento"
+
+
+def sanitize_key_fragment(value: Optional[str]) -> str:
+    if not value:
+        return "sin_valor"
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]", "_", value.strip())
+    return cleaned or "sin_valor"
+
+
+def persist_json_artifact(key: str, payload: Dict[str, Any]) -> Optional[Dict[str, str]]:
+    """
+    Guarda JSON en S3 sin bloquear la validación si falla.
+    """
+    if not EXTRACTIONS_BUCKET_NAME:
+        return None
+    try:
+        s3.put_object(
+            Bucket=EXTRACTIONS_BUCKET_NAME,
+            Key=key,
+            Body=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            ContentType="application/json",
+        )
+        return {"bucket": EXTRACTIONS_BUCKET_NAME, "key": key}
+    except Exception:
+        logger.exception("No se pudo persistir artefacto JSON en S3. key=%s", key)
+        return None
+
+
+def build_frontend_required(extractions: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    return {
+        slot: {
+            "document_valid": bool(data.get("document_valid")),
+            "plate": normalize_plate(data.get("plate")),
+            "serial": normalize_serial(data.get("serial")),
+            "reason": data.get("reason"),
+        }
+        for slot, data in extractions.items()
+    }
 
 
 def create_upload_url(slot: str, filename: str, content_type: str) -> Dict[str, Any]:
@@ -768,7 +807,7 @@ def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             },
         )
 
-    if slot in {"invoice", "certificate_of_origin"}:
+    if slot == "invoice":
         result = extract_document_with_textract(
             slot=slot,
             filename=filename,
@@ -786,18 +825,40 @@ def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 def handle_validate_slot(body: Dict[str, Any]) -> Dict[str, Any]:
     slot = body.get("slot")
     document = body.get("document") or {}
+    expedient_id = body.get("expedient_id") or "sin_expediente"
 
     valid_slots = {"invoice", "certificate_of_origin", "photo_plate", "photo_serial"}
     if slot not in valid_slots:
         return response(400, {"success": False, "message": "slot inválido"})
 
     slot_name, result = process_slot(slot, document)
+    artifact_key = (
+        f"extractions/{sanitize_key_fragment(str(expedient_id))}/slots/"
+        f"{sanitize_key_fragment(slot_name)}_{uuid.uuid4().hex}.json"
+    )
+    persisted = persist_json_artifact(
+        artifact_key,
+        {
+            "expedient_id": expedient_id,
+            "slot": slot_name,
+            "result": result,
+        },
+    )
     return response(
         200,
         {
             "success": True,
             "slot": slot_name,
             "result": result,
+            "frontend_required": {
+                slot_name: {
+                    "document_valid": bool(result.get("document_valid")),
+                    "plate": normalize_plate(result.get("plate")),
+                    "serial": normalize_serial(result.get("serial")),
+                    "reason": result.get("reason"),
+                }
+            },
+            "persisted_extraction": persisted,
         },
     )
 
@@ -936,6 +997,57 @@ def lambda_handler(event, context):
 
     overall_status = "validated" if same_expedient else "manual_review"
 
+    frontend_required = build_frontend_required(extraction_results)
+    persisted_extractions: Dict[str, Dict[str, str]] = {}
+    for slot in required_slots:
+        key = (
+            f"extractions/{sanitize_key_fragment(str(expedient_id or 'sin_expediente'))}/slots/"
+            f"{sanitize_key_fragment(slot)}_{uuid.uuid4().hex}.json"
+        )
+        persisted = persist_json_artifact(
+            key,
+            {
+                "expedient_id": expedient_id,
+                "slot": slot,
+                "result": extraction_results.get(slot),
+            },
+        )
+        if persisted:
+            persisted_extractions[slot] = persisted
+
+    summary_key = (
+        f"extractions/{sanitize_key_fragment(str(expedient_id or 'sin_expediente'))}/"
+        f"summary_{uuid.uuid4().hex}.json"
+    )
+    persisted_summary = persist_json_artifact(
+        summary_key,
+        {
+            "expedient_id": expedient_id,
+            "frontend_required": frontend_required,
+            "document_validation": {
+                "invoice_valid": invoice_valid,
+                "certificate_of_origin_valid": certificate_valid,
+                "photo_plate_valid": photo_plate_valid,
+                "photo_serial_valid": photo_serial_valid,
+            },
+            "extracted_data": {
+                "invoice_plate": invoice_plate,
+                "certificate_plate": cert_plate,
+                "photo_plate": photo_plate,
+                "invoice_serial": invoice_serial,
+                "certificate_serial": cert_serial,
+                "photo_serial": photo_serial,
+            },
+            "cross_validation": {
+                "plate_match": plate_match,
+                "serial_match": serial_match,
+                "same_expedient": same_expedient,
+            },
+            "overall_status": overall_status,
+            "messages": messages,
+        },
+    )
+
     result = {
         "success": True,
         "expedient_id": expedient_id,
@@ -961,6 +1073,9 @@ def lambda_handler(event, context):
         "overall_status": overall_status,
         "messages": messages,
         "raw_extractions": extraction_results,
+        "frontend_required": frontend_required,
+        "persisted_extractions": persisted_extractions,
+        "persisted_summary": persisted_summary,
     }
 
     return response(200, result)
