@@ -342,6 +342,10 @@ def extract_document_fields_from_textract(blocks: list[Dict[str, Any]]) -> Dict[
                 valid = next((c for c in candidates if is_valid_vin(c)), None)
                 if valid:
                     result["serial"] = normalize_serial(valid)
+                else:
+                    vin_like = next((c for c in candidates if is_vin_like(c)), None)
+                    if vin_like:
+                        result["serial"] = normalize_serial(vin_like)
 
             if plate_col is not None and not result["plate"]:
                 plate_cell = row.get(plate_col)
@@ -361,6 +365,10 @@ def extract_document_fields_from_textract(blocks: list[Dict[str, Any]]) -> Dict[
             valid = next((c for c in candidates if is_valid_vin(c)), None)
             if valid:
                 result["serial"] = normalize_serial(valid)
+            else:
+                vin_like = next((c for c in candidates if is_vin_like(c)), None)
+                if vin_like:
+                    result["serial"] = normalize_serial(vin_like)
         if not result["plate"] and "PLACA" in upper:
             plates = extract_plate_candidates(line)
             plate = normalize_plate(plates[0]) if plates else None
@@ -407,6 +415,26 @@ def extract_document_with_textract(slot: str, filename: str, document: Dict[str,
     plate = fields.get("plate")
     serial = fields.get("serial")
 
+    # Refuerzo para facturas:
+    # si Textract no logra extraer serial/placa o falla tipo documental,
+    # intentamos complementar con Bedrock usando el prompt especializado.
+    if slot == "invoice" and (not serial or not plate or not document_valid):
+        bedrock_result = invoke_bedrock_json_extractor(
+            slot=slot,
+            filename=filename,
+            document=document,
+        )
+        bedrock_plate = normalize_plate(bedrock_result.get("plate"))
+        bedrock_serial = normalize_serial(bedrock_result.get("serial"))
+        bedrock_valid = bool(bedrock_result.get("document_valid"))
+
+        if not plate and bedrock_plate:
+            plate = bedrock_plate
+        if not serial and bedrock_serial:
+            serial = bedrock_serial
+        if not document_valid and bedrock_valid:
+            document_valid = True
+
     if slot == "invoice":
         if not document_valid:
             reason = "No corresponde a una factura"
@@ -443,9 +471,13 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
     if slot == "invoice":
         invoice_serial = normalized_result.get("serial")
         if not is_valid_vin(invoice_serial):
-            normalized_result["serial"] = None
-            if normalized_result["document_valid"]:
-                normalized_result["reason"] = "Factura válida sin serial (valor VIN visible pero no confiable para extracción automática)"
+            if is_vin_like(invoice_serial):
+                if normalized_result["document_valid"]:
+                    normalized_result["reason"] = "Factura válida con serial VIN-like (posible ruido OCR)"
+            else:
+                normalized_result["serial"] = None
+                if normalized_result["document_valid"]:
+                    normalized_result["reason"] = "Factura válida sin serial (valor VIN visible pero no confiable para extracción automática)"
 
     # Misma regla conservadora para fotoserial: no mostrar serial dudoso.
     if slot == "photo_serial":

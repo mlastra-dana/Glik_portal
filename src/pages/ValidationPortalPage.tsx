@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import UploadCard from '../components/validation/UploadCard';
 import { documentSlotsSeed } from '../mocks/documents';
 import { compareExpedient, validateDocuments, validateImages } from '../services/api';
-import { SlotExtraction } from '../types/api';
+import { CompareExpedientResponse, SlotExtraction } from '../types/api';
 import { DocumentType, UploadedDocument } from '../types/validation';
 
 const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
@@ -65,7 +65,7 @@ const areEquivalentWithOcrNoise = (a?: string | null, b?: string | null): boolea
 };
 
 const ValidationPortalPage = () => {
-  const [flowStep, setFlowStep] = useState<1 | 2>(1);
+  const [flowStep, setFlowStep] = useState<1 | 2 | 3>(1);
   const [agentFirstName, setAgentFirstName] = useState('');
   const [agentLastName, setAgentLastName] = useState('');
   const [documents, setDocuments] = useState<UploadedDocument[]>(documentSlotsSeed);
@@ -92,6 +92,8 @@ const ValidationPortalPage = () => {
     validateDocuments: false,
     validateImages: false
   });
+  const [compareResult, setCompareResult] = useState<CompareExpedientResponse | null>(null);
+  const [sendingToDana, setSendingToDana] = useState(false);
 
   const filesBySlot = useMemo(
     () =>
@@ -104,6 +106,13 @@ const ValidationPortalPage = () => {
     const byType = Object.fromEntries(documents.map((doc) => [doc.type, doc])) as Partial<Record<DocumentType, UploadedDocument>>;
     return extractionDisplayOrder.map((type) => byType[type]).filter((doc): doc is UploadedDocument => Boolean(doc));
   }, [documents]);
+  const visibleDocumentsForExtraction = useMemo(
+    () =>
+      orderedDocumentsForExtraction.filter((doc) =>
+        isDocumentSlot(doc.type) ? phaseCompleted.validateDocuments : phaseCompleted.validateImages
+      ),
+    [orderedDocumentsForExtraction, phaseCompleted.validateDocuments, phaseCompleted.validateImages]
+  );
 
   const canContinueToValidation = agentFirstName.trim().length > 0 && agentLastName.trim().length > 0;
 
@@ -149,10 +158,12 @@ const ValidationPortalPage = () => {
     setPhaseLoading((prev) => ({ ...prev, compare: true }));
     setPhaseErrors((prev) => ({ ...prev, compare: '' }));
     try {
-      await compareExpedient(EXPEDIENT_ID, mergedExtractions);
+      const response = await compareExpedient(EXPEDIENT_ID, mergedExtractions);
+      setCompareResult(response);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error no controlado en comparación.';
       setPhaseErrors((prev) => ({ ...prev, compare: message }));
+      setCompareResult(null);
     } finally {
       setPhaseLoading((prev) => ({ ...prev, compare: false }));
     }
@@ -160,6 +171,8 @@ const ValidationPortalPage = () => {
 
   const handleSelectFile = (type: DocumentType, file: File) => {
     setPhaseErrors((prev) => ({ ...prev, upload: '' }));
+    setCompareResult(null);
+    if (flowStep === 3) setFlowStep(2);
     setUploadingBySlot((prev) => ({ ...prev, [type]: true }));
     setDocumentStatus(type, {
       file,
@@ -180,6 +193,8 @@ const ValidationPortalPage = () => {
   };
 
   const handleClearFile = (type: DocumentType) => {
+    setCompareResult(null);
+    if (flowStep === 3) setFlowStep(2);
     setRawExtractions((prev) => {
       const next = { ...prev };
       delete next[type];
@@ -190,6 +205,64 @@ const ValidationPortalPage = () => {
       validateImages: isImageSlot(type) ? false : prev.validateImages
     }));
     setDocuments((prev) => prev.map((doc) => (doc.type === type ? resetDocument(doc) : doc)));
+  };
+
+  const canSendToDana =
+    phaseCompleted.validateDocuments &&
+    phaseCompleted.validateImages &&
+    Boolean(compareResult) &&
+    !phaseLoading.validateDocuments &&
+    !phaseLoading.validateImages &&
+    !phaseLoading.compare &&
+    !sendingToDana;
+
+  const handleSendToDanaDemo = async () => {
+    if (!canSendToDana || !compareResult) return;
+
+    setSendingToDana(true);
+    try {
+      const danaPayload = {
+        destination: 'DANA_DEMO',
+        sent_at: new Date().toISOString(),
+        expedient_id: EXPEDIENT_ID,
+        agent: {
+          first_name: agentFirstName.trim(),
+          last_name: agentLastName.trim()
+        },
+        requested_extractions: {
+          certificate_of_origin: {
+            plate: rawExtractions.certificate_of_origin?.plate ?? null,
+            serial: rawExtractions.certificate_of_origin?.serial ?? null
+          },
+          invoice: {
+            plate: rawExtractions.invoice?.plate ?? null,
+            serial: rawExtractions.invoice?.serial ?? null
+          },
+          photo_plate: {
+            plate: rawExtractions.photo_plate?.plate ?? null
+          },
+          photo_serial: {
+            serial: rawExtractions.photo_serial?.serial ?? null
+          }
+        },
+        validation_summary: {
+          overall_status: compareResult.overall_status ?? 'manual_review',
+          document_validation: compareResult.document_validation ?? {},
+          cross_validation: compareResult.cross_validation ?? {},
+          messages: compareResult.messages ?? []
+        }
+      };
+
+      // Demo: simula envío y deja payload visible en consola para inspección.
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      console.info('DANA demo payload', danaPayload);
+      setFlowStep(3);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo enviar a DANA.';
+      setPhaseErrors((prev) => ({ ...prev, compare: `Error en envío demo: ${message}` }));
+    } finally {
+      setSendingToDana(false);
+    }
   };
 
   const handleValidateDocuments = async (): Promise<boolean> => {
@@ -423,109 +496,300 @@ const ValidationPortalPage = () => {
               </>
             ) : null}
 
-            {Object.keys(rawExtractions).length > 0 ? (
+            {flowStep === 2 && visibleDocumentsForExtraction.length > 0 ? (
               <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
                 <h3 className="font-display text-lg font-bold text-glik-secondary">Extracción detectada</h3>
-                <div className="mt-4 overflow-hidden rounded-xl border border-slate-200">
-                  <table className="w-full min-w-[640px] border-collapse text-sm">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600">Soporte</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600">Dato</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600">Valor detectado</th>
-                        <th className="px-4 py-3 text-left font-semibold text-slate-600">Estado</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {orderedDocumentsForExtraction.map((doc) => {
-                        const extraction = rawExtractions[doc.type];
-                        const plate = extraction?.plate ?? null;
-                        const serial = extraction?.serial ?? null;
-                        const isDetected = Boolean(extraction?.document_valid);
-                        const invoiceRef = rawExtractions.invoice;
-                        const certificateRef = rawExtractions.certificate_of_origin;
-                        const invoicePlate = normalizePlate(invoiceRef?.plate);
-                        const certificatePlate = normalizePlate(certificateRef?.plate);
-                        const invoiceSerial = normalizeSerial(invoiceRef?.serial);
-                        const certificateSerial = normalizeSerial(certificateRef?.serial);
-                        const referencePlate = certificatePlate;
-                        const referenceSerial = certificateSerial;
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  {visibleDocumentsForExtraction.map((doc) => {
+                    const extraction = rawExtractions[doc.type];
+                    const plate = extraction?.plate ?? null;
+                    const serial = extraction?.serial ?? null;
+                    const isDetected = Boolean(extraction?.document_valid);
+                    const invoiceRef = rawExtractions.invoice;
+                    const certificateRef = rawExtractions.certificate_of_origin;
+                    const invoicePlate = normalizePlate(invoiceRef?.plate);
+                    const certificatePlate = normalizePlate(certificateRef?.plate);
+                    const invoiceSerial = normalizeSerial(invoiceRef?.serial);
+                    const certificateSerial = normalizeSerial(certificateRef?.serial);
+                    const referencePlate = certificatePlate;
+                    const referenceSerial = certificateSerial;
 
-                        const datumLabel =
-                          doc.type === 'photo_plate' ? 'Placa' : doc.type === 'photo_serial' ? 'Serial' : 'Placa / Serial';
-                        const detectedValue =
-                          doc.type === 'photo_plate'
-                            ? plate || '-'
-                            : doc.type === 'photo_serial'
-                              ? serial || '-'
-                              : `${plate || '-'} / ${serial || '-'}`;
+                    let statusLabel = 'Sin dato';
+                    let statusClass = 'bg-slate-200 text-slate-600';
+                    let cardClass = 'border-slate-200 bg-white';
+                    let detailText = extraction?.reason ?? 'Aún no hay resultado de extracción para este soporte.';
 
-                        let statusLabel = 'Sin dato';
-                        let statusClass = 'bg-slate-200 text-slate-600';
-
-                        if (doc.type === 'invoice') {
-                          if (!isDetected || !invoicePlate || !invoiceSerial) {
-                            statusLabel = 'Sin dato';
-                          } else if (!certificatePlate || !certificateSerial) {
-                            statusLabel = 'Sin referencia';
-                          } else if (
-                            areEquivalentWithOcrNoise(invoicePlate, certificatePlate) &&
-                            areEquivalentWithOcrNoise(invoiceSerial, certificateSerial)
-                          ) {
-                            statusLabel = 'Coincide';
-                            statusClass = 'bg-emerald-100 text-emerald-700';
-                          } else {
-                            statusLabel = 'No coincide';
-                            statusClass = 'bg-rose-100 text-rose-700';
-                          }
-                        } else if (doc.type === 'certificate_of_origin') {
-                          if (!isDetected) {
-                            statusLabel = 'Sin dato';
-                          } else {
-                            statusLabel = 'Referencia';
-                            statusClass = 'bg-sky-100 text-sky-700';
-                          }
-                        } else if (doc.type === 'photo_plate') {
-                          const current = normalizePlate(plate);
-                          if (!isDetected || !current) {
-                            statusLabel = 'Sin dato';
-                          } else if (!referencePlate) {
-                            statusLabel = 'Sin referencia';
-                          } else if (areEquivalentWithOcrNoise(current, referencePlate)) {
-                            statusLabel = 'Coincide';
-                            statusClass = 'bg-emerald-100 text-emerald-700';
-                          } else {
-                            statusLabel = 'No coincide';
-                            statusClass = 'bg-rose-100 text-rose-700';
-                          }
-                        } else if (doc.type === 'photo_serial') {
-                          const current = normalizeSerial(serial);
-                          if (!isDetected || !current) {
-                            statusLabel = 'Sin dato';
-                          } else if (!referenceSerial) {
-                            statusLabel = 'Sin referencia';
-                          } else if (areEquivalentWithOcrNoise(current, referenceSerial)) {
-                            statusLabel = 'Coincide';
-                            statusClass = 'bg-emerald-100 text-emerald-700';
-                          } else {
-                            statusLabel = 'No coincide';
-                            statusClass = 'bg-rose-100 text-rose-700';
-                          }
+                    if (doc.type === 'invoice') {
+                      if (!isDetected || !invoicePlate || !invoiceSerial) {
+                        if (!isDetected) {
+                          statusLabel = 'Tipo inválido';
+                          statusClass = 'bg-rose-100 text-rose-700';
+                          cardClass = 'border-rose-200 bg-rose-50/40';
+                          detailText = extraction?.reason ?? 'No corresponde al tipo documental esperado.';
+                        } else {
+                          const missingParts = [!invoicePlate ? 'placa' : null, !invoiceSerial ? 'serial' : null]
+                            .filter(Boolean)
+                            .join(' y ');
+                          statusLabel = 'Dato incompleto';
+                          statusClass = 'bg-amber-100 text-amber-800';
+                          cardClass = 'border-amber-200 bg-amber-50/40';
+                          detailText = `No se pudo extraer ${missingParts} de la factura. ${
+                            extraction?.reason ?? 'Revise legibilidad del archivo.'
+                          }`;
                         }
+                      } else if (!certificatePlate || !certificateSerial) {
+                        statusLabel = 'Sin referencia';
+                        detailText = 'Aún no hay certificado de origen con placa y serial para comparar.';
+                      } else if (
+                        areEquivalentWithOcrNoise(invoicePlate, certificatePlate) &&
+                        areEquivalentWithOcrNoise(invoiceSerial, certificateSerial)
+                      ) {
+                        statusLabel = 'Coincide';
+                        statusClass = 'bg-emerald-100 text-emerald-700';
+                        cardClass = 'border-emerald-200 bg-emerald-50/40';
+                        detailText = 'Placa y serial de factura coinciden con el certificado de origen.';
+                      } else {
+                        statusLabel = 'No coincide';
+                        statusClass = 'bg-rose-100 text-rose-700';
+                        cardClass = 'border-rose-200 bg-rose-50/40';
+                        const plateMatches = areEquivalentWithOcrNoise(invoicePlate, certificatePlate);
+                        const serialMatches = areEquivalentWithOcrNoise(invoiceSerial, certificateSerial);
+                        detailText = `Factura vs certificado: ${
+                          plateMatches ? 'placa coincide' : 'placa no coincide'
+                        }, ${serialMatches ? 'serial coincide' : 'serial no coincide'}.`;
+                      }
+                    } else if (doc.type === 'certificate_of_origin') {
+                      if (!isDetected) {
+                        statusLabel = 'Tipo inválido';
+                        statusClass = 'bg-rose-100 text-rose-700';
+                        cardClass = 'border-rose-200 bg-rose-50/40';
+                        detailText = extraction?.reason ?? 'No corresponde a certificado de origen.';
+                      } else if (!plate || !serial) {
+                        const missingParts = [!plate ? 'placa' : null, !serial ? 'serial' : null]
+                          .filter(Boolean)
+                          .join(' y ');
+                        statusLabel = 'Dato incompleto';
+                        statusClass = 'bg-amber-100 text-amber-800';
+                        cardClass = 'border-amber-200 bg-amber-50/40';
+                        detailText = `El certificado quedó incompleto: falta ${missingParts}. ${
+                          extraction?.reason ?? 'Revise legibilidad del documento.'
+                        }`;
+                      } else {
+                        statusLabel = 'Referencia';
+                        statusClass = 'bg-sky-100 text-sky-700';
+                        cardClass = 'border-sky-200 bg-sky-50/40';
+                        detailText = 'Se usa como referencia principal para comparar placa y serial.';
+                      }
+                    } else if (doc.type === 'photo_plate') {
+                      const current = normalizePlate(plate);
+                      if (!isDetected || !current) {
+                        if (!isDetected) {
+                          statusLabel = 'Tipo inválido';
+                          statusClass = 'bg-rose-100 text-rose-700';
+                          cardClass = 'border-rose-200 bg-rose-50/40';
+                          detailText = extraction?.reason ?? 'No corresponde a una fotoplaca.';
+                        } else {
+                          statusLabel = 'Placa no detectada';
+                          statusClass = 'bg-rose-100 text-rose-700';
+                          cardClass = 'border-rose-200 bg-rose-50/40';
+                          detailText = extraction?.reason ?? 'No fue posible detectar la placa en la imagen.';
+                        }
+                      } else if (!referencePlate) {
+                        statusLabel = 'Sin referencia';
+                        detailText = 'No hay placa de referencia en el certificado para comparar.';
+                      } else if (areEquivalentWithOcrNoise(current, referencePlate)) {
+                        statusLabel = 'Coincide';
+                        statusClass = 'bg-emerald-100 text-emerald-700';
+                        cardClass = 'border-emerald-200 bg-emerald-50/40';
+                        detailText = 'La placa de la foto coincide con la placa del certificado.';
+                      } else {
+                        statusLabel = 'No coincide';
+                        statusClass = 'bg-rose-100 text-rose-700';
+                        cardClass = 'border-rose-200 bg-rose-50/40';
+                        detailText = `Fotoplaca (${current}) no coincide con certificado (${referencePlate}).`;
+                      }
+                    } else if (doc.type === 'photo_serial') {
+                      const current = normalizeSerial(serial);
+                      if (!isDetected || !current) {
+                        if (!isDetected) {
+                          statusLabel = 'Tipo inválido';
+                          statusClass = 'bg-rose-100 text-rose-700';
+                          cardClass = 'border-rose-200 bg-rose-50/40';
+                          detailText = extraction?.reason ?? 'No corresponde a un fotoserial.';
+                        } else {
+                          statusLabel = 'Serial no detectado';
+                          statusClass = 'bg-rose-100 text-rose-700';
+                          cardClass = 'border-rose-200 bg-rose-50/40';
+                          detailText = extraction?.reason ?? 'No fue posible detectar el serial en la imagen.';
+                        }
+                      } else if (!referenceSerial) {
+                        statusLabel = 'Sin referencia';
+                        detailText = 'No hay serial de referencia en el certificado para comparar.';
+                      } else if (areEquivalentWithOcrNoise(current, referenceSerial)) {
+                        statusLabel = 'Coincide';
+                        statusClass = 'bg-emerald-100 text-emerald-700';
+                        cardClass = 'border-emerald-200 bg-emerald-50/40';
+                        detailText = 'El serial de la foto coincide con el serial del certificado.';
+                      } else {
+                        statusLabel = 'No coincide';
+                        statusClass = 'bg-rose-100 text-rose-700';
+                        cardClass = 'border-rose-200 bg-rose-50/40';
+                        detailText = `Fotoserial (${current}) no coincide con certificado (${referenceSerial}).`;
+                      }
+                    }
 
-                        return (
-                          <tr key={doc.type} className="border-t border-slate-200 bg-white">
-                            <td className="px-4 py-3 font-medium text-slate-800">{doc.label}</td>
-                            <td className="px-4 py-3 text-slate-700">{datumLabel}</td>
-                            <td className="px-4 py-3 font-mono text-slate-700">{detectedValue}</td>
-                            <td className="px-4 py-3">
-                              <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                    const plateValue =
+                      doc.type === 'photo_serial' ? 'No aplica' : plate ? plate : isDetected ? 'No detectada' : 'Sin resultado';
+                    const serialValue =
+                      doc.type === 'photo_plate' ? 'No aplica' : serial ? serial : isDetected ? 'No detectado' : 'Sin resultado';
+                    const showPlateRow = doc.type !== 'photo_serial';
+                    const showSerialRow = doc.type !== 'photo_plate';
+
+                    return (
+                      <article key={doc.type} className={`rounded-xl border p-4 shadow-sm ${cardClass}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <h4 className="text-base font-semibold text-slate-800">{doc.label}</h4>
+                          <span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${statusClass}`}>{statusLabel}</span>
+                        </div>
+
+                        <div className="mt-4 space-y-2">
+                          {showPlateRow ? (
+                            <div className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Placa</span>
+                              <span className="font-mono text-sm text-slate-800">{plateValue}</span>
+                            </div>
+                          ) : null}
+                          {showSerialRow ? (
+                            <div className="flex items-center justify-between rounded-lg bg-white/80 px-3 py-2">
+                              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Serial</span>
+                              <span className="font-mono text-sm text-slate-800">{serialValue}</span>
+                            </div>
+                          ) : null}
+                        </div>
+
+                        <p className="mt-3 text-xs text-slate-700">{detailText}</p>
+                      </article>
+                    );
+                  })}
+                </div>
+                <div className="mt-5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={handleSendToDanaDemo}
+                    disabled={!canSendToDana}
+                    className={`btn-primary ${!canSendToDana ? 'cursor-not-allowed opacity-50' : ''}`}
+                  >
+                    {sendingToDana ? 'Enviando...' : 'Enviar'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
+
+            {flowStep === 3 && Object.keys(rawExtractions).length > 0 ? (
+              <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h3 className="font-display text-lg font-bold text-glik-secondary">Resumen General</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFlowStep(2)}
+                    className="btn-primary"
+                  >
+                    Volver
+                  </button>
+                </div>
+
+                <div className="mt-4 grid gap-4 md:grid-cols-2">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Placa</p>
+                    <p className="mt-2 text-sm text-slate-700">
+                      Referencia (Certificado):{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.certificate_plate ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-slate-700">
+                      Factura:{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.invoice_plate ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-slate-700">
+                      Fotoplaca:{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.photo_plate ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-800">
+                      Coincidencia:{' '}
+                      <span
+                        className={
+                          compareResult?.cross_validation?.plate_match
+                            ? 'text-emerald-700'
+                            : compareResult?.cross_validation?.plate_match === false
+                              ? 'text-rose-700'
+                              : 'text-amber-700'
+                        }
+                      >
+                        {compareResult?.cross_validation?.plate_match
+                          ? 'Sí'
+                          : compareResult?.cross_validation?.plate_match === false
+                            ? 'No'
+                            : 'Sin datos suficientes'}
+                      </span>
+                    </p>
+                  </div>
+
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Serial</p>
+                    <p className="mt-2 text-sm text-slate-700">
+                      Referencia (Certificado):{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.certificate_serial ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-slate-700">
+                      Factura:{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.invoice_serial ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="text-sm text-slate-700">
+                      Fotoserial:{' '}
+                      <span className="font-mono font-semibold text-slate-900">
+                        {compareResult?.extracted_data?.photo_serial ?? 'No encontrado'}
+                      </span>
+                    </p>
+                    <p className="mt-2 text-sm font-semibold text-slate-800">
+                      Coincidencia:{' '}
+                      <span
+                        className={
+                          compareResult?.cross_validation?.serial_match
+                            ? 'text-emerald-700'
+                            : compareResult?.cross_validation?.serial_match === false
+                              ? 'text-rose-700'
+                              : 'text-amber-700'
+                        }
+                      >
+                        {compareResult?.cross_validation?.serial_match
+                          ? 'Sí'
+                          : compareResult?.cross_validation?.serial_match === false
+                            ? 'No'
+                            : 'Sin datos suficientes'}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-xl border border-slate-200 bg-white p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resultado final del expediente</p>
+                  <p className="mt-2 text-sm font-semibold text-slate-800">
+                    Estado:{' '}
+                    <span className={compareResult?.overall_status === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>
+                      {compareResult?.overall_status === 'validated' ? 'Validado' : 'Revisión manual'}
+                    </span>
+                  </p>
                 </div>
               </div>
             ) : null}
