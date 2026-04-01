@@ -268,11 +268,15 @@ Reglas:
 - document_valid debe ser true solo si el archivo corresponde claramente a una factura.
 - plate: extraer la placa solo si aparece explícitamente en la factura.
 - serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
+- Si existe VIN en la factura, usar ese valor como `serial` de preferencia.
+- Solo aceptar `serial` cuando esté asociado a etiquetas de vehículo como: "VIN", "N° CHASIS", "SERIAL MOTOR", "SERIAL CARROCERÍA", "SERIAL DE MOTOR", "SERIAL DE CHASIS".
+- Si no hay etiqueta clara de vehículo para el serial, devolver `serial: null`.
 - Si la factura no tiene placa o serial, devolver null en el campo faltante.
 - No confundas placa con VIN, serial, número de factura o póliza.
 - Si el documento no es factura, document_valid = false.
 - Para extraer placa, prioriza campos cercanos a etiquetas como: "PLACA", "PLACA VEHÍCULO", "PLACA DEL VEHÍCULO".
 - Ignora valores de campos como: "NRO FACTURA", "NRO CONTROL", "PÓLIZA", "RIF", "CLIENTE", "CÓDIGO".
+- Nunca uses como serial campos administrativos aunque parezcan alfanuméricos (ej.: número de factura, control interno, referencia comercial, código de cliente).
 - Maneja ambigüedades OCR frecuentes en placas: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
 - Si hay más de una placa candidata, elige la que esté más claramente asociada al vehículo de la factura.
 - No inventes placa ni serial si no están legibles.
@@ -289,15 +293,14 @@ El serial debe devolverse como texto limpio.
 
     if slot == "certificate_of_origin":
         return """
-Eres un validador documental de motocicletas.
-
-Tu tarea es validar si el archivo cargado corresponde a un CERTIFICADO DE ORIGEN y extraer solo los datos necesarios para validación de expediente.
+Analiza el documento logístico proporcionado y extrae únicamente la información visible en el documento.
 
 Responde exclusivamente con JSON válido.
 No agregues explicaciones.
 No agregues texto antes ni después del JSON.
 No uses markdown.
 No inventes datos.
+Si un campo no aparece claramente en el documento, devuelve null.
 
 Debes devolver exactamente este esquema:
 {
@@ -307,28 +310,42 @@ Debes devolver exactamente este esquema:
   "reason": null
 }
 
-Reglas:
-- document_valid debe ser true solo si el archivo corresponde claramente a un certificado de origen.
-- plate: extraer la placa solo si aparece explícitamente en el certificado.
-- serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
-- Si el certificado no tiene placa o serial, devolver null en el campo faltante.
-- Si el documento no es certificado de origen, document_valid = false.
-- Este documento es la fuente prioritaria para placa/serial del expediente.
-- Para placa, prioriza campos cercanos a etiquetas como: "PLACA", "PLACA DEL VEHÍCULO", "IDENTIFICACIÓN VEHÍCULO".
-- Para serial, prioriza "VIN", "N° CHASIS", "SERIAL MOTOR", "SERIAL CARROCERÍA".
-- Ignora números administrativos (acta, consecutivo, control, póliza, RIF, referencia).
-- Maneja ambigüedades OCR frecuentes en placa y serial: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
-- Si hay múltiples candidatos, elige el más consistente con etiquetas de identificación del vehículo.
-- No inventes placa ni serial si no están legibles.
-- reason debe contener una frase corta:
+Reglas generales de normalización:
+- Todos los campos de texto deben devolverse sin espacios al inicio o al final.
+- Si un texto contiene múltiples espacios internos consecutivos, colapsarlos a un solo espacio.
+- Los valores null deben devolverse como JSON null.
+- No inventes códigos ni formatos no visibles en el documento.
+- El certificado de origen es la referencia principal del expediente para placa/serial.
+
+Reglas de extracción:
+- document_valid:
+  Debe ser true solo si el archivo corresponde claramente a un certificado de origen.
+  Si no corresponde, devolver false.
+
+- plate:
+  Extraer la placa solo si aparece explícitamente y claramente asociada al vehículo.
+  Priorizar etiquetas como: "PLACA", "PLACA DEL VEHÍCULO", "IDENTIFICACIÓN VEHÍCULO".
+  Si no aparece claramente, devolver null.
+
+- serial:
+  Extraer el serial del vehículo (VIN, N° CHASIS, SERIAL MOTOR, SERIAL CARROCERÍA) solo si aparece explícitamente.
+  Priorizar VIN cuando esté presente.
+  Si no aparece claramente, devolver null.
+
+Reglas de descarte:
+- Ignorar números administrativos: acta, consecutivo, control, póliza, RIF, referencia, orden interna.
+- No confundir serial/VIN con números de factura, pedido o códigos comerciales.
+- Si hay múltiples candidatos, elegir el más consistente con etiquetas de identificación del vehículo.
+- Manejar ambigüedades OCR frecuentes: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
+
+reason:
+- Debe ser una frase corta y operativa, por ejemplo:
   - "Certificado válido"
   - "No corresponde a un certificado de origen"
   - "Certificado válido sin placa"
   - "Certificado válido sin serial"
-  - o una combinación equivalente y breve.
 
-La placa debe devolverse en MAYÚSCULAS.
-El serial debe devolverse como texto limpio.
+Devuelve únicamente el JSON final.
 """.strip()
 
     if slot == "photo_plate":
@@ -387,8 +404,14 @@ Debes devolver exactamente este esquema:
 
 Reglas:
 - document_valid debe ser true solo si la imagen corresponde claramente a una foto de serial de motor, serial de carrocería, serial de chasis o VIN.
-- serial: extraer únicamente el serial visible.
+- serial: extraer únicamente el serial visible grabado en la pieza del chasis/motor (texto estampado o grabado).
 - plate debe ser null en este tipo de documento.
+- Prioriza serial de 17 caracteres tipo VIN cuando esté presente.
+- Lee el serial carácter por carácter en el orden exacto (sin inventar ni completar).
+- Ignora texto de etiquetas adhesivas, códigos de barras, números de lote, referencias de fábrica y cualquier texto impreso en mangueras/cables.
+- Ignora texto parcial borroso o tapado por dedos/cables.
+- Si hay más de un candidato, elige el que esté físicamente grabado en metal/chasis y no el de stickers.
+- Si no puedes leer el serial completo con alta confianza, devuelve serial = null y document_valid = false.
 - Si no se ve un serial claro, document_valid = false.
 - reason debe contener una frase corta:
   - "Fotoserial válido"

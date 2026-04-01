@@ -30,12 +30,7 @@ const slotLabel: Record<DocumentType, string> = {
   photo_plate: 'Fotoplaca',
   photo_serial: 'Fotoserial'
 };
-const extractionDisplayOrder: Record<DocumentType, number> = {
-  certificate_of_origin: 0,
-  invoice: 1,
-  photo_plate: 2,
-  photo_serial: 3
-};
+const extractionDisplayOrder: DocumentType[] = ['certificate_of_origin', 'invoice', 'photo_plate', 'photo_serial'];
 
 const normalizePlate = (value?: string | null) => (value ? value.replace(/\s+/g, '').toUpperCase().trim() : null);
 const normalizeSerial = (value?: string | null) => (value ? value.replace(/[^A-Z0-9]/gi, '').toUpperCase().trim() : null);
@@ -105,10 +100,10 @@ const ValidationPortalPage = () => {
       >,
     [documents]
   );
-  const orderedDocumentsForExtraction = useMemo(
-    () => [...documents].sort((a, b) => extractionDisplayOrder[a.type] - extractionDisplayOrder[b.type]),
-    [documents]
-  );
+  const orderedDocumentsForExtraction = useMemo(() => {
+    const byType = Object.fromEntries(documents.map((doc) => [doc.type, doc])) as Partial<Record<DocumentType, UploadedDocument>>;
+    return extractionDisplayOrder.map((type) => byType[type]).filter((doc): doc is UploadedDocument => Boolean(doc));
+  }, [documents]);
 
   const canContinueToValidation = agentFirstName.trim().length > 0 && agentLastName.trim().length > 0;
 
@@ -116,13 +111,18 @@ const ValidationPortalPage = () => {
     () =>
       DOCUMENT_SLOTS.every((slot) => Boolean(filesBySlot[slot])) &&
       !phaseLoading.validateDocuments &&
+      !phaseLoading.validateImages &&
       !phaseLoading.compare,
-    [filesBySlot, phaseLoading.compare, phaseLoading.validateDocuments]
+    [filesBySlot, phaseLoading.compare, phaseLoading.validateDocuments, phaseLoading.validateImages]
   );
 
   const canValidateImages = useMemo(
-    () => IMAGE_SLOTS.every((slot) => Boolean(filesBySlot[slot])) && !phaseLoading.validateImages && !phaseLoading.compare,
-    [filesBySlot, phaseLoading.compare, phaseLoading.validateImages]
+    () =>
+      IMAGE_SLOTS.every((slot) => Boolean(filesBySlot[slot])) &&
+      !phaseLoading.validateImages &&
+      !phaseLoading.validateDocuments &&
+      !phaseLoading.compare,
+    [filesBySlot, phaseLoading.compare, phaseLoading.validateDocuments, phaseLoading.validateImages]
   );
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
@@ -193,7 +193,7 @@ const ValidationPortalPage = () => {
   };
 
   const handleValidateDocuments = async (): Promise<boolean> => {
-    if (!canValidateDocuments) return false;
+    if (!canValidateDocuments || phaseLoading.validateImages) return false;
 
     setPhaseLoading((prev) => ({ ...prev, validateDocuments: true }));
     setPhaseErrors((prev) => ({ ...prev, validateDocuments: '' }));
@@ -221,7 +221,7 @@ const ValidationPortalPage = () => {
   };
 
   const handleValidateImages = async (): Promise<boolean> => {
-    if (!canValidateImages) return false;
+    if (!canValidateImages || phaseLoading.validateDocuments) return false;
 
     setPhaseLoading((prev) => ({ ...prev, validateImages: true }));
     setPhaseErrors((prev) => ({ ...prev, validateImages: '' }));
@@ -398,26 +398,28 @@ const ValidationPortalPage = () => {
                   <div className="mt-4">{renderUploadGrid(documents.filter((doc) => isDocumentSlot(doc.type)))}</div>
                 </div>
 
-                <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-display text-lg font-bold text-glik-secondary">Imágenes</h3>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={handleValidateImages}
-                        disabled={!canValidateImages}
-                        className={`btn-primary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
-                      >
-                        {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
-                      </button>
+                {phaseCompleted.validateDocuments ? (
+                  <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-display text-lg font-bold text-glik-secondary">Imágenes</h3>
+                      <div className="flex items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={handleValidateImages}
+                          disabled={!canValidateImages}
+                          className={`btn-primary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
+                        >
+                          {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
+                        </button>
+                      </div>
                     </div>
+                    <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900">
+                      Cargue <strong>Fotoplaca</strong> y <strong>Fotoserial</strong>. Cuando ambas estén cargadas, presione
+                      <strong> Validar imágenes</strong>.
+                    </div>
+                    <div className="mt-4">{renderUploadGrid(documents.filter((doc) => isImageSlot(doc.type)))}</div>
                   </div>
-                  <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900">
-                    Cargue <strong>Fotoplaca</strong> y <strong>Fotoserial</strong>. Cuando ambas estén cargadas, presione
-                    <strong> Validar imágenes</strong>.
-                  </div>
-                  <div className="mt-4">{renderUploadGrid(documents.filter((doc) => isImageSlot(doc.type)))}</div>
-                </div>
+                ) : null}
               </>
             ) : null}
 
