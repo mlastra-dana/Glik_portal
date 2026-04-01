@@ -3,7 +3,7 @@ interface ProcessStepperProps {
 }
 
 const steps = [
-  { id: 1, label: 'Documentos' },
+  { id: 1, label: 'Agente' },
   { id: 2, label: 'Validación' },
   { id: 3, label: 'Resultado' }
 ] as const;

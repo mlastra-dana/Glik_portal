@@ -257,10 +257,15 @@ const compareInFrontend = (
   const imageSerial = normalizeSerial(photoSerial?.serial);
 
   // Regla de negocio principal:
-  // 1) Fotoplaca vs placa del certificado
-  // 2) Fotoserial vs serial del certificado
-  const plateMatch = compareTwo(certificatePlate, imagePlate, 'plate');
-  const serialMatch = compareTwo(certificateSerial, imageSerial, 'serial');
+  // 1) Fotoplaca vs placa documental de referencia (certificado, o factura como respaldo)
+  // 2) Fotoserial vs serial documental de referencia (certificado, o factura como respaldo)
+  const referencePlate = certificatePlate ?? invoicePlate;
+  const referenceSerial = certificateSerial ?? invoiceSerial;
+  const referencePlateSource = certificatePlate ? 'certificado de origen' : invoicePlate ? 'factura' : null;
+  const referenceSerialSource = certificateSerial ? 'certificado de origen' : invoiceSerial ? 'factura' : null;
+
+  const plateMatch = compareTwo(referencePlate, imagePlate, 'plate');
+  const serialMatch = compareTwo(referenceSerial, imageSerial, 'serial');
 
   const invoiceValid = Boolean(invoice?.document_valid);
   const certificateValid = Boolean(certificate?.document_valid);
@@ -285,17 +290,17 @@ const compareInFrontend = (
   messages.push(photoSerialValid ? 'El fotoserial es válido.' : `Fotoserial: ${photoSerial?.reason ?? 'No válido.'}`);
   messages.push(
     plateMatch === true
-      ? 'La placa de fotoplaca coincide con el certificado de origen.'
+      ? `La placa de fotoplaca coincide con el ${referencePlateSource ?? 'documento de referencia'}.`
       : plateMatch === false
-        ? 'La placa de fotoplaca no coincide con el certificado de origen.'
-        : 'No hay datos suficientes para validar placa (certificado/fotoplaca).'
+        ? `La placa de fotoplaca no coincide con el ${referencePlateSource ?? 'documento de referencia'}.`
+        : 'No hay datos suficientes para validar placa (documentos/fotoplaca).'
   );
   messages.push(
     serialMatch === true
-      ? 'El serial de fotoserial coincide con el certificado de origen.'
+      ? `El serial de fotoserial coincide con el ${referenceSerialSource ?? 'documento de referencia'}.`
       : serialMatch === false
-        ? 'El serial de fotoserial no coincide con el certificado de origen.'
-        : 'No hay datos suficientes para validar serial (certificado/fotoserial).'
+        ? `El serial de fotoserial no coincide con el ${referenceSerialSource ?? 'documento de referencia'}.`
+        : 'No hay datos suficientes para validar serial (documentos/fotoserial).'
   );
 
   return {
