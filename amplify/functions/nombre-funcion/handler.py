@@ -143,6 +143,76 @@ def normalize_serial(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+VIN_TRANSLITERATION = {
+    "A": 1,
+    "B": 2,
+    "C": 3,
+    "D": 4,
+    "E": 5,
+    "F": 6,
+    "G": 7,
+    "H": 8,
+    "J": 1,
+    "K": 2,
+    "L": 3,
+    "M": 4,
+    "N": 5,
+    "P": 7,
+    "R": 9,
+    "S": 2,
+    "T": 3,
+    "U": 4,
+    "V": 5,
+    "W": 6,
+    "X": 7,
+    "Y": 8,
+    "Z": 9,
+}
+VIN_WEIGHTS = [8, 7, 6, 5, 4, 3, 2, 10, 0, 9, 8, 7, 6, 5, 4, 3, 2]
+VIN_REGEX = re.compile(r"^[A-HJ-NPR-Z0-9]{17}$")
+
+
+def is_valid_vin(vin: Optional[str]) -> bool:
+    if not vin or not isinstance(vin, str):
+        return False
+    normalized = normalize_serial(vin)
+    if not normalized or not VIN_REGEX.fullmatch(normalized):
+        return False
+
+    total = 0
+    for index, char in enumerate(normalized):
+        if char.isdigit():
+            value = int(char)
+        else:
+            value = VIN_TRANSLITERATION.get(char)
+            if value is None:
+                return False
+        total += value * VIN_WEIGHTS[index]
+
+    check_digit = "X" if (total % 11) == 10 else str(total % 11)
+    return normalized[8] == check_digit
+
+
+def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
+    normalized_result = {
+        "document_valid": bool(result.get("document_valid")),
+        "plate": normalize_plate(result.get("plate")),
+        "serial": normalize_serial(result.get("serial")),
+        "reason": result.get("reason"),
+    }
+
+    # Regla de negocio: en factura solo aceptamos VIN real (17 + checksum).
+    # Si no es VIN válido, preferimos null para evitar falsos positivos.
+    if slot == "invoice":
+        invoice_serial = normalized_result.get("serial")
+        if not is_valid_vin(invoice_serial):
+            normalized_result["serial"] = None
+            if normalized_result["document_valid"]:
+                normalized_result["reason"] = "Factura válida sin serial"
+
+    return normalized_result
+
+
 def safe_json_loads(raw: str) -> Dict[str, Any]:
     try:
         return json.loads(raw)
@@ -246,15 +316,14 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
 def build_system_prompt(slot: str) -> str:
     if slot == "invoice":
         return """
-Eres un validador documental de motocicletas.
-
-Tu tarea es validar si el archivo cargado corresponde a una FACTURA y extraer solo los datos necesarios para validación de expediente.
+Analiza la factura proporcionada y extrae únicamente la información visible en el documento.
 
 Responde exclusivamente con JSON válido.
 No agregues explicaciones.
 No agregues texto antes ni después del JSON.
 No uses markdown.
 No inventes datos.
+Si un campo no aparece claramente en el documento, devuelve null.
 
 Debes devolver exactamente este esquema:
 {
@@ -264,31 +333,47 @@ Debes devolver exactamente este esquema:
   "reason": null
 }
 
-Reglas:
-- document_valid debe ser true solo si el archivo corresponde claramente a una factura.
-- plate: extraer la placa solo si aparece explícitamente en la factura.
-- serial: extraer el serial de motor, serial de carrocería, serial de chasis o VIN solo si aparece explícitamente y corresponde claramente al vehículo.
-- Si existe VIN en la factura, usar ese valor como `serial` de preferencia.
-- Solo aceptar `serial` cuando esté asociado a etiquetas de vehículo como: "VIN", "N° CHASIS", "SERIAL MOTOR", "SERIAL CARROCERÍA", "SERIAL DE MOTOR", "SERIAL DE CHASIS".
-- Si no hay etiqueta clara de vehículo para el serial, devolver `serial: null`.
-- Si la factura no tiene placa o serial, devolver null en el campo faltante.
-- No confundas placa con VIN, serial, número de factura o póliza.
-- Si el documento no es factura, document_valid = false.
-- Para extraer placa, prioriza campos cercanos a etiquetas como: "PLACA", "PLACA VEHÍCULO", "PLACA DEL VEHÍCULO".
-- Ignora valores de campos como: "NRO FACTURA", "NRO CONTROL", "PÓLIZA", "RIF", "CLIENTE", "CÓDIGO".
-- Nunca uses como serial campos administrativos aunque parezcan alfanuméricos (ej.: número de factura, control interno, referencia comercial, código de cliente).
-- Maneja ambigüedades OCR frecuentes en placas: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
-- Si hay más de una placa candidata, elige la que esté más claramente asociada al vehículo de la factura.
-- No inventes placa ni serial si no están legibles.
-- reason debe contener una frase corta:
+Reglas generales de normalización:
+- Todos los campos de texto deben devolverse sin espacios al inicio o al final.
+- Si un texto contiene múltiples espacios internos consecutivos, colapsarlos a un solo espacio.
+- Los valores null deben devolverse como JSON null.
+- No inventes códigos ni formatos no visibles en el documento.
+
+Reglas de extracción:
+- document_valid:
+  Debe ser true solo si el archivo corresponde claramente a una factura.
+  Si no corresponde, devolver false.
+
+- plate:
+  Extraer la placa solo si aparece explícitamente y claramente asociada al vehículo.
+  Priorizar etiquetas cercanas como: "PLACA", "PLACA VEHÍCULO", "PLACA DEL VEHÍCULO".
+  Si no aparece claramente, devolver null.
+
+- serial:
+  Extraer solo serial del vehículo (VIN, N° CHASIS, SERIAL MOTOR, SERIAL CARROCERÍA).
+  Si existe VIN, usarlo de preferencia como serial.
+  Aceptar serial solo cuando esté asociado a etiquetas de identificación vehicular.
+  Si el documento tiene tabla con columnas "VIN" y "Motor", el serial debe salir de la columna "VIN" de la línea del producto.
+  Nunca usar la columna "Motor" como serial cuando exista "VIN".
+  Si el valor VIN no tiene 17 caracteres alfanuméricos claros, devolver serial = null.
+  Si el VIN no pasa validación de dígito verificador (ISO 3779, posición 9), devolver serial = null.
+  Si no hay etiqueta clara de vehículo, devolver serial = null.
+
+Reglas de descarte:
+- Ignorar datos administrativos de factura: RIF/VAT, nombre, dirección, moneda, número de control (nro_ctrl),
+  número de factura (supplier_invoice_number), códigos de producto (product_id), cantidades/precios y líneas de detalle.
+- Nunca usar como serial campos administrativos aunque parezcan alfanuméricos.
+- No confundir serial/VIN con número de factura, control interno, referencia comercial o código de cliente.
+- Manejar ambigüedades OCR frecuentes: 0/O, 1/I, 5/S, 8/B, 6/G, 2/Z.
+
+reason:
+- Debe ser una frase corta y operativa, por ejemplo:
   - "Factura válida"
   - "No corresponde a una factura"
   - "Factura válida sin placa"
   - "Factura válida sin serial"
-  - o una combinación equivalente y breve.
 
-La placa debe devolverse en MAYÚSCULAS.
-El serial debe devolverse como texto limpio.
+Devuelve únicamente el JSON final.
 """.strip()
 
     if slot == "certificate_of_origin":
@@ -477,7 +562,7 @@ def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         filename=filename,
         document=doc,
     )
-    return slot, result
+    return slot, sanitize_slot_result(slot, result)
 
 
 def handle_validate_slot(body: Dict[str, Any]) -> Dict[str, Any]:
