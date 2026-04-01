@@ -359,7 +359,7 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
         if not is_valid_vin(invoice_serial):
             normalized_result["serial"] = None
             if normalized_result["document_valid"]:
-                normalized_result["reason"] = "Factura válida sin serial (VIN no legible o OCR ambiguo)"
+                normalized_result["reason"] = "Factura válida sin serial (valor VIN visible pero no confiable para extracción automática)"
 
     return normalized_result
 
