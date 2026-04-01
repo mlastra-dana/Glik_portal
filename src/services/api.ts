@@ -1,17 +1,9 @@
 import { DocumentType, ValidationResult } from '../types/validation';
-import {
-  CompareExpedientResponse,
-  SlotExtraction,
-  UploadUrlResponse,
-  UploadedDocumentRef,
-  ValidateDocumentsResponse,
-  ValidateImagesResponse
-} from '../types/api';
+import { CompareExpedientResponse, SlotExtraction, ValidateDocumentsResponse, ValidateImagesResponse } from '../types/api';
 
 const apiUrl = import.meta.env.VITE_API_URL;
 const networkTimeoutMs = Number(import.meta.env.VITE_NETWORK_TIMEOUT_MS ?? 30000);
-const uploadTimeoutMs = Number(import.meta.env.VITE_UPLOAD_TIMEOUT_MS ?? 120000);
-const compareTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
+const phaseTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
 
 const fetchWithTimeout = async (
   input: RequestInfo | URL,
@@ -27,6 +19,9 @@ const fetchWithTimeout = async (
     if (error instanceof DOMException && error.name === 'AbortError') {
       throw new Error(timeoutMessage);
     }
+    if (error instanceof TypeError) {
+      throw new Error('No se pudo conectar con el backend (posible CORS, URL inválida o red).');
+    }
     throw error;
   } finally {
     window.clearTimeout(timeoutId);
@@ -38,6 +33,35 @@ const ensureApiUrl = () => {
     throw new Error('Falta VITE_API_URL en variables de entorno.');
   }
   return apiUrl;
+};
+
+const toBase64 = async (file: File): Promise<string> => {
+  const bytes = await file.arrayBuffer();
+  let binary = '';
+  const view = new Uint8Array(bytes);
+  for (let i = 0; i < view.length; i += 1) {
+    binary += String.fromCharCode(view[i]);
+  }
+  return btoa(binary);
+};
+
+const encodeFilesBySlot = async (filesBySlot: Partial<Record<DocumentType, File>>, slots: DocumentType[]) => {
+  const entries = await Promise.all(
+    slots.map(async (slot) => {
+      const file = filesBySlot[slot];
+      if (!file) {
+        throw new Error(`Falta archivo para ${slot}.`);
+      }
+      return [
+        slot,
+        {
+          filename: file.name,
+          content_base64: await toBase64(file)
+        }
+      ] as const;
+    })
+  );
+  return Object.fromEntries(entries) as Record<DocumentType, { filename: string; content_base64: string }>;
 };
 
 const postAction = async <TResponse>(action: string, payload: Record<string, unknown>, timeoutMs = networkTimeoutMs) => {
@@ -59,83 +83,30 @@ const postAction = async <TResponse>(action: string, payload: Record<string, unk
   return body as TResponse;
 };
 
-export const createUploadUrl = async (slot: DocumentType, file: File): Promise<UploadUrlResponse> => {
-  return postAction<UploadUrlResponse>('create_upload_url', {
-    slot,
-    filename: file.name,
-    content_type: file.type || 'application/octet-stream'
-  });
-};
-
-export const uploadFileToS3 = async (uploadUrl: string, file: File): Promise<void> => {
-  const putResponse = await fetchWithTimeout(
-    uploadUrl,
-    {
-      method: 'PUT',
-      headers: {
-        'Content-Type': file.type || 'application/octet-stream'
-      },
-      body: file
-    },
-    uploadTimeoutMs,
-    `Se agotó el tiempo subiendo ${file.name}.`
-  );
-
-  if (!putResponse.ok) {
-    throw new Error(`Falló carga a S3. HTTP ${putResponse.status}`);
-  }
-};
-
-export const uploadDocument = async (slot: DocumentType, file: File): Promise<UploadedDocumentRef> => {
-  const upload = await createUploadUrl(slot, file);
-  if (!upload.success || !upload.upload_url || !upload.key || !upload.bucket) {
-    throw new Error(upload.message ?? 'No se recibió información de carga a S3.');
-  }
-
-  await uploadFileToS3(upload.upload_url, file);
-
-  return {
-    slot,
-    filename: file.name,
-    s3_bucket: upload.bucket,
-    s3_key: upload.key
-  };
-};
-
 type DocumentSlot = Extract<DocumentType, 'invoice' | 'certificate_of_origin'>;
 type ImageSlot = Extract<DocumentType, 'photo_plate' | 'photo_serial'>;
 
 export const validateDocuments = async (
   expedientId: string,
-  refs: Record<DocumentSlot, UploadedDocumentRef>
+  filesBySlot: Record<DocumentSlot, File>
 ): Promise<ValidateDocumentsResponse> => {
+  const documents = await encodeFilesBySlot(filesBySlot, ['invoice', 'certificate_of_origin']);
   return postAction<ValidateDocumentsResponse>(
     'validate_documents',
-    {
-      expedient_id: expedientId,
-      documents: {
-        invoice: refs.invoice,
-        certificate_of_origin: refs.certificate_of_origin
-      }
-    },
-    compareTimeoutMs
+    { expedient_id: expedientId, documents },
+    phaseTimeoutMs
   );
 };
 
 export const validateImages = async (
   expedientId: string,
-  refs: Record<ImageSlot, UploadedDocumentRef>
+  filesBySlot: Record<ImageSlot, File>
 ): Promise<ValidateImagesResponse> => {
+  const documents = await encodeFilesBySlot(filesBySlot, ['photo_plate', 'photo_serial']);
   return postAction<ValidateImagesResponse>(
     'validate_images',
-    {
-      expedient_id: expedientId,
-      documents: {
-        photo_plate: refs.photo_plate,
-        photo_serial: refs.photo_serial
-      }
-    },
-    compareTimeoutMs
+    { expedient_id: expedientId, documents },
+    phaseTimeoutMs
   );
 };
 
@@ -145,11 +116,8 @@ export const compareExpedient = async (
 ): Promise<CompareExpedientResponse> => {
   return postAction<CompareExpedientResponse>(
     'compare_expedient',
-    {
-      expedient_id: expedientId,
-      raw_extractions: rawExtractions
-    },
-    compareTimeoutMs
+    { expedient_id: expedientId, raw_extractions: rawExtractions },
+    phaseTimeoutMs
   );
 };
 

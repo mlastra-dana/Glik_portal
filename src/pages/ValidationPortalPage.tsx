@@ -5,8 +5,8 @@ import ResultPanel from '../components/validation/ResultPanel';
 import UploadCard from '../components/validation/UploadCard';
 import EmptyState from '../components/ui/EmptyState';
 import { documentSlotsSeed } from '../mocks/documents';
-import { compareExpedient, toValidationResult, uploadDocument, validateDocuments, validateImages } from '../services/api';
-import { SlotExtraction, UploadedDocumentRef } from '../types/api';
+import { compareExpedient, toValidationResult, validateDocuments, validateImages } from '../services/api';
+import { SlotExtraction } from '../types/api';
 import { DocumentType, UploadedDocument, ValidationResult } from '../types/validation';
 
 const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
@@ -24,8 +24,8 @@ const isDocumentSlot = (slot: DocumentType): slot is (typeof DOCUMENT_SLOTS)[num
 const isImageSlot = (slot: DocumentType): slot is (typeof IMAGE_SLOTS)[number] => IMAGE_SLOTS.includes(slot as (typeof IMAGE_SLOTS)[number]);
 
 const ValidationPortalPage = () => {
+  const [activeScreen, setActiveScreen] = useState<'documents' | 'images'>('documents');
   const [documents, setDocuments] = useState<UploadedDocument[]>(documentSlotsSeed);
-  const [uploadedRefs, setUploadedRefs] = useState<Partial<Record<DocumentType, UploadedDocumentRef>>>({});
   const [rawExtractions, setRawExtractions] = useState<Partial<Record<DocumentType, SlotExtraction>>>({});
   const [result, setResult] = useState<ValidationResult | null>(null);
 
@@ -51,21 +51,33 @@ const ValidationPortalPage = () => {
     validateImages: false
   });
 
+  const filesBySlot = useMemo(
+    () =>
+      Object.fromEntries(documents.filter((d) => d.file).map((d) => [d.type, d.file as File])) as Partial<
+        Record<DocumentType, File>
+      >,
+    [documents]
+  );
+
   const hasAnyDocument = documents.some((document) => Boolean(document.file));
   const isProcessing = Object.values(uploadingBySlot).some(Boolean) || Object.values(phaseLoading).some(Boolean);
   const currentStep: 1 | 2 | 3 = result ? 3 : hasAnyDocument || isProcessing ? 2 : 1;
 
   const canValidateDocuments = useMemo(
     () =>
-      DOCUMENT_SLOTS.every((slot) => Boolean(uploadedRefs[slot])) &&
+      DOCUMENT_SLOTS.every((slot) => Boolean(filesBySlot[slot])) &&
       !phaseLoading.validateDocuments &&
       !phaseLoading.compare,
-    [phaseLoading.compare, phaseLoading.validateDocuments, uploadedRefs]
+    [filesBySlot, phaseLoading.compare, phaseLoading.validateDocuments]
   );
 
   const canValidateImages = useMemo(
-    () => IMAGE_SLOTS.every((slot) => Boolean(uploadedRefs[slot])) && !phaseLoading.validateImages && !phaseLoading.compare,
-    [phaseLoading.compare, phaseLoading.validateImages, uploadedRefs]
+    () => IMAGE_SLOTS.every((slot) => Boolean(filesBySlot[slot])) && !phaseLoading.validateImages && !phaseLoading.compare,
+    [filesBySlot, phaseLoading.compare, phaseLoading.validateImages]
+  );
+  const canOpenImagesScreen = phaseCompleted.validateDocuments || DOCUMENT_SLOTS.every((slot) => Boolean(filesBySlot[slot]));
+  const visibleDocuments = documents.filter((doc) =>
+    activeScreen === 'documents' ? isDocumentSlot(doc.type) : isImageSlot(doc.type)
   );
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
@@ -103,50 +115,30 @@ const ValidationPortalPage = () => {
     }
   };
 
-  const handleSelectFile = async (type: DocumentType, file: File) => {
+  const handleSelectFile = (type: DocumentType, file: File) => {
     setResult(null);
     setPhaseErrors((prev) => ({ ...prev, upload: '' }));
-    setPhaseCompleted((prev) => ({
-      validateDocuments: isDocumentSlot(type) ? false : prev.validateDocuments,
-      validateImages: isImageSlot(type) ? false : prev.validateImages
-    }));
-
     setUploadingBySlot((prev) => ({ ...prev, [type]: true }));
-    try {
-      const ref = await uploadDocument(type, file);
-      setUploadedRefs((prev) => ({ ...prev, [type]: ref }));
-      setRawExtractions((prev) => {
-        const next = { ...prev };
-        delete next[type];
-        return next;
-      });
-      setDocumentStatus(type, {
-        file,
-        fileName: file.name,
-        status: 'uploaded',
-        errorMessage: null
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Error no controlado en carga.';
-      setPhaseErrors((prev) => ({ ...prev, upload: message }));
-      setDocumentStatus(type, {
-        file: null,
-        fileName: null,
-        status: 'error',
-        errorMessage: message
-      });
-    } finally {
-      setUploadingBySlot((prev) => ({ ...prev, [type]: false }));
-    }
-  };
-
-  const handleClearFile = (type: DocumentType) => {
-    setResult(null);
-    setUploadedRefs((prev) => {
+    setDocumentStatus(type, {
+      file,
+      fileName: file.name,
+      status: 'uploaded',
+      errorMessage: null
+    });
+    setRawExtractions((prev) => {
       const next = { ...prev };
       delete next[type];
       return next;
     });
+    setPhaseCompleted((prev) => ({
+      validateDocuments: isDocumentSlot(type) ? false : prev.validateDocuments,
+      validateImages: isImageSlot(type) ? false : prev.validateImages
+    }));
+    setUploadingBySlot((prev) => ({ ...prev, [type]: false }));
+  };
+
+  const handleClearFile = (type: DocumentType) => {
+    setResult(null);
     setRawExtractions((prev) => {
       const next = { ...prev };
       delete next[type];
@@ -167,14 +159,15 @@ const ValidationPortalPage = () => {
     setPhaseErrors((prev) => ({ ...prev, validateDocuments: '' }));
     try {
       const response = await validateDocuments(EXPEDIENT_ID, {
-        invoice: uploadedRefs.invoice as UploadedDocumentRef,
-        certificate_of_origin: uploadedRefs.certificate_of_origin as UploadedDocumentRef
+        invoice: filesBySlot.invoice as File,
+        certificate_of_origin: filesBySlot.certificate_of_origin as File
       });
       const phaseExtractions = response.raw_extractions ?? {};
       const mergedExtractions = { ...rawExtractions, ...phaseExtractions };
       setRawExtractions(mergedExtractions);
       updateDocumentsFromExtractions(phaseExtractions);
       setPhaseCompleted((prev) => ({ ...prev, validateDocuments: true }));
+      setActiveScreen('images');
       if (phaseCompleted.validateImages) {
         await handleCompareExpedient(mergedExtractions);
       }
@@ -194,8 +187,8 @@ const ValidationPortalPage = () => {
     setPhaseErrors((prev) => ({ ...prev, validateImages: '' }));
     try {
       const response = await validateImages(EXPEDIENT_ID, {
-        photo_plate: uploadedRefs.photo_plate as UploadedDocumentRef,
-        photo_serial: uploadedRefs.photo_serial as UploadedDocumentRef
+        photo_plate: filesBySlot.photo_plate as File,
+        photo_serial: filesBySlot.photo_serial as File
       });
       const phaseExtractions = response.raw_extractions ?? {};
       const mergedExtractions = { ...rawExtractions, ...phaseExtractions };
@@ -215,7 +208,6 @@ const ValidationPortalPage = () => {
 
   const handleResetFlow = () => {
     setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
-    setUploadedRefs({});
     setRawExtractions({});
     setResult(null);
     setPhaseErrors({
@@ -239,6 +231,7 @@ const ValidationPortalPage = () => {
       validateDocuments: false,
       validateImages: false
     });
+    setActiveScreen('documents');
   };
 
   return (
@@ -263,23 +256,50 @@ const ValidationPortalPage = () => {
 
       <div className="mt-5 space-y-5">
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-soft">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setActiveScreen('documents')}
+              className={`btn-secondary ${activeScreen === 'documents' ? 'bg-purple-100 text-glik-primary' : ''}`}
+            >
+              Documentos
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveScreen('images')}
+              disabled={!canOpenImagesScreen}
+              className={`btn-secondary ${
+                activeScreen === 'images' ? 'bg-purple-100 text-glik-primary' : ''
+              } ${!canOpenImagesScreen ? 'cursor-not-allowed opacity-50' : ''}`}
+            >
+              Imágenes
+            </button>
+          </div>
+          <p className="mb-4 text-sm text-slate-600">
+            {activeScreen === 'documents'
+              ? 'Pantalla 1: cargue y valide Factura y Certificado de origen.'
+              : 'Pantalla 2: cargue y valide Fotoplaca y Fotoserial.'}
+          </p>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={handleValidateDocuments}
-              disabled={!canValidateDocuments}
-              className={`btn-primary ${!canValidateDocuments ? 'cursor-not-allowed opacity-50' : ''}`}
-            >
-              {phaseLoading.validateDocuments ? 'Validando documentos...' : 'Validar documentos'}
-            </button>
-            <button
-              type="button"
-              onClick={handleValidateImages}
-              disabled={!canValidateImages}
-              className={`btn-secondary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
-            >
-              {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
-            </button>
+            {activeScreen === 'documents' ? (
+              <button
+                type="button"
+                onClick={handleValidateDocuments}
+                disabled={!canValidateDocuments}
+                className={`btn-primary ${!canValidateDocuments ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                {phaseLoading.validateDocuments ? 'Validando documentos...' : 'Validar documentos'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleValidateImages}
+                disabled={!canValidateImages}
+                className={`btn-primary ${!canValidateImages ? 'cursor-not-allowed opacity-50' : ''}`}
+              >
+                {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
+              </button>
+            )}
             <button type="button" onClick={handleResetFlow} className="btn-secondary">
               Reiniciar flujo
             </button>
@@ -299,7 +319,7 @@ const ValidationPortalPage = () => {
         </div>
 
         <div className="grid gap-4 md:grid-cols-2">
-          {documents.map((document) => (
+          {visibleDocuments.map((document) => (
             <UploadCard
               key={document.type}
               document={document}
