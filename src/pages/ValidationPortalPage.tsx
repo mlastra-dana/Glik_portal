@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import ProcessStepper from '../components/validation/ProcessStepper';
 import ResultPanel from '../components/validation/ResultPanel';
@@ -50,6 +50,9 @@ const ValidationPortalPage = () => {
     validateDocuments: false,
     validateImages: false
   });
+  const [progressValue, setProgressValue] = useState(0);
+  const [lastAutoDocumentsSignature, setLastAutoDocumentsSignature] = useState('');
+  const [lastAutoImagesSignature, setLastAutoImagesSignature] = useState('');
 
   const filesBySlot = useMemo(
     () =>
@@ -62,6 +65,8 @@ const ValidationPortalPage = () => {
   const hasAnyDocument = documents.some((document) => Boolean(document.file));
   const isProcessing = Object.values(uploadingBySlot).some(Boolean) || Object.values(phaseLoading).some(Boolean);
   const currentStep: 1 | 2 | 3 = result ? 3 : hasAnyDocument || isProcessing ? 2 : 1;
+  const documentsSignature = `${filesBySlot.invoice?.name ?? ''}|${filesBySlot.certificate_of_origin?.name ?? ''}`;
+  const imagesSignature = `${filesBySlot.photo_plate?.name ?? ''}|${filesBySlot.photo_serial?.name ?? ''}`;
 
   const canValidateDocuments = useMemo(
     () =>
@@ -79,6 +84,13 @@ const ValidationPortalPage = () => {
   const visibleDocuments = documents.filter((doc) =>
     activeScreen === 'documents' ? isDocumentSlot(doc.type) : isImageSlot(doc.type)
   );
+  const activePhaseLabel = phaseLoading.validateDocuments
+    ? 'Validando documentos...'
+    : phaseLoading.validateImages
+      ? 'Validando imágenes...'
+      : phaseLoading.compare
+        ? 'Comparando expediente...'
+        : '';
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
     setDocuments((prev) => prev.map((doc) => (doc.type === slot ? { ...doc, ...patch } : doc)));
@@ -151,9 +163,9 @@ const ValidationPortalPage = () => {
     setDocuments((prev) => prev.map((doc) => (doc.type === type ? resetDocument(doc) : doc)));
   };
 
-  const handleValidateDocuments = async () => {
+  const handleValidateDocuments = async (): Promise<boolean> => {
     if (!canValidateDocuments) {
-      return;
+      return false;
     }
     setPhaseLoading((prev) => ({ ...prev, validateDocuments: true }));
     setPhaseErrors((prev) => ({ ...prev, validateDocuments: '' }));
@@ -171,17 +183,19 @@ const ValidationPortalPage = () => {
       if (phaseCompleted.validateImages) {
         await handleCompareExpedient(mergedExtractions);
       }
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error no controlado en validación documental.';
       setPhaseErrors((prev) => ({ ...prev, validateDocuments: message }));
+      return false;
     } finally {
       setPhaseLoading((prev) => ({ ...prev, validateDocuments: false }));
     }
   };
 
-  const handleValidateImages = async () => {
+  const handleValidateImages = async (): Promise<boolean> => {
     if (!canValidateImages) {
-      return;
+      return false;
     }
     setPhaseLoading((prev) => ({ ...prev, validateImages: true }));
     setPhaseErrors((prev) => ({ ...prev, validateImages: '' }));
@@ -198,9 +212,11 @@ const ValidationPortalPage = () => {
       if (phaseCompleted.validateDocuments) {
         await handleCompareExpedient(mergedExtractions);
       }
+      return true;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error no controlado en validación de imágenes.';
       setPhaseErrors((prev) => ({ ...prev, validateImages: message }));
+      return false;
     } finally {
       setPhaseLoading((prev) => ({ ...prev, validateImages: false }));
     }
@@ -231,8 +247,59 @@ const ValidationPortalPage = () => {
       validateDocuments: false,
       validateImages: false
     });
+    setLastAutoDocumentsSignature('');
+    setLastAutoImagesSignature('');
     setActiveScreen('documents');
   };
+
+  useEffect(() => {
+    const runAutoDocumentsValidation = async () => {
+      if (!canValidateDocuments || phaseCompleted.validateDocuments) {
+        return;
+      }
+      if (documentsSignature === lastAutoDocumentsSignature) {
+        return;
+      }
+      const success = await handleValidateDocuments();
+      if (success) {
+        setLastAutoDocumentsSignature(documentsSignature);
+      }
+    };
+    void runAutoDocumentsValidation();
+  }, [canValidateDocuments, documentsSignature, lastAutoDocumentsSignature, phaseCompleted.validateDocuments]);
+
+  useEffect(() => {
+    const runAutoImagesValidation = async () => {
+      if (!canValidateImages || phaseCompleted.validateImages) {
+        return;
+      }
+      if (imagesSignature === lastAutoImagesSignature) {
+        return;
+      }
+      const success = await handleValidateImages();
+      if (success) {
+        setLastAutoImagesSignature(imagesSignature);
+      }
+    };
+    void runAutoImagesValidation();
+  }, [canValidateImages, imagesSignature, lastAutoImagesSignature, phaseCompleted.validateImages]);
+
+  useEffect(() => {
+    if (!isProcessing) {
+      setProgressValue(0);
+      return;
+    }
+
+    setProgressValue(8);
+    const id = window.setInterval(() => {
+      setProgressValue((prev) => {
+        if (prev >= 92) return prev;
+        return prev + 6;
+      });
+    }, 450);
+
+    return () => window.clearInterval(id);
+  }, [isProcessing]);
 
   return (
     <section className="container-app py-8 sm:py-10">
@@ -307,7 +374,27 @@ const ValidationPortalPage = () => {
           <div className="mt-3 text-sm text-slate-600">
             {Object.values(uploadingBySlot).some(Boolean) ? <p>Subiendo archivo...</p> : null}
             {phaseLoading.compare ? <p>Comparando expediente...</p> : null}
+            {!isProcessing && activeScreen === 'documents' && !canValidateDocuments ? (
+              <p>Cargue Factura y Certificado para iniciar validación.</p>
+            ) : null}
+            {!isProcessing && activeScreen === 'images' && !canValidateImages ? (
+              <p>Cargue Fotoplaca y Fotoserial para iniciar validación.</p>
+            ) : null}
           </div>
+          {isProcessing ? (
+            <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
+                <span>{activePhaseLabel || 'Procesando...'}</span>
+                <span>{progressValue}%</span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                <div
+                  className="h-full rounded-full bg-glik-primary transition-all duration-300"
+                  style={{ width: `${progressValue}%` }}
+                />
+              </div>
+            </div>
+          ) : null}
           {phaseErrors.upload ? <p className="mt-2 text-sm text-rose-700">Error de carga: {phaseErrors.upload}</p> : null}
           {phaseErrors.validateDocuments ? (
             <p className="mt-2 text-sm text-rose-700">Error validando documentos: {phaseErrors.validateDocuments}</p>
