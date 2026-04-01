@@ -86,7 +86,7 @@ const ValidationPortalPage = () => {
     () => IMAGE_SLOTS.every((slot) => Boolean(filesBySlot[slot])) && !phaseLoading.validateImages && !phaseLoading.compare,
     [filesBySlot, phaseLoading.compare, phaseLoading.validateImages]
   );
-  const canOpenImagesScreen = phaseCompleted.validateDocuments || DOCUMENT_SLOTS.every((slot) => Boolean(filesBySlot[slot]));
+  const canOpenImagesScreen = phaseCompleted.validateDocuments;
   const visibleDocuments = documents.filter((doc) =>
     activeScreen === 'documents' ? isDocumentSlot(doc.type) : isImageSlot(doc.type)
   );
