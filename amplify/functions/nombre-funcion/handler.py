@@ -239,25 +239,25 @@ def get_block_text(block: Dict[str, Any], block_map: Dict[str, Dict[str, Any]]) 
     return normalize_text(" ".join(words))
 
 
-def extract_invoice_fields_with_textract(file_bytes: bytes) -> Dict[str, Optional[str]]:
-    """
-    Prioriza extracción de VIN/placa desde estructura de tabla en factura.
-    """
-    result: Dict[str, Optional[str]] = {"plate": None, "serial": None}
-    try:
-        resp = textract.analyze_document(
-            Document={"Bytes": file_bytes},
-            FeatureTypes=["TABLES", "FORMS"],
-        )
-    except Exception as exc:
-        logger.warning("Textract no disponible para factura: %s", exc)
-        return result
+def extract_plate_candidates(text: Optional[str]) -> list[str]:
+    upper = normalize_text(text).upper()
+    if not upper:
+        return []
+    return re.findall(r"(?<![A-Z0-9])[A-Z0-9]{6,7}(?![A-Z0-9])", upper)
 
-    blocks = resp.get("Blocks", [])
-    if not blocks:
-        return result
+
+def analyze_textract_document(file_bytes: bytes) -> Dict[str, Any]:
+    return textract.analyze_document(
+        Document={"Bytes": file_bytes},
+        FeatureTypes=["TABLES", "FORMS"],
+    )
+
+
+def extract_document_fields_from_textract(blocks: list[Dict[str, Any]]) -> Dict[str, Optional[str]]:
+    result: Dict[str, Optional[str]] = {"plate": None, "serial": None}
     block_map = {b.get("Id"): b for b in blocks if b.get("Id")}
 
+    # 1) Extraer de tablas (prioritario)
     for table in [b for b in blocks if b.get("BlockType") == "TABLE"]:
         child_ids: list[str] = []
         for rel in table.get("Relationships", []):
@@ -303,8 +303,6 @@ def extract_invoice_fields_with_textract(file_bytes: bytes) -> Dict[str, Optiona
                 valid = next((c for c in candidates if is_valid_vin(c)), None)
                 if valid:
                     result["serial"] = normalize_serial(valid)
-                elif candidates:
-                    result["serial"] = normalize_serial(candidates[0])
 
             if plate_col is not None and not result["plate"]:
                 plate_cell = row.get(plate_col)
@@ -315,33 +313,82 @@ def extract_invoice_fields_with_textract(file_bytes: bytes) -> Dict[str, Optiona
             if result["serial"] and result["plate"]:
                 return result
 
-    if not result["serial"]:
-        for line in [b for b in blocks if b.get("BlockType") == "LINE"]:
-            line_text = normalize_text(line.get("Text"))
-            if "VIN" not in line_text.upper():
-                continue
-            candidates = extract_vin_candidates(line_text)
+    # 2) Fallback en líneas con palabras clave
+    lines = [normalize_text(b.get("Text")) for b in blocks if b.get("BlockType") == "LINE"]
+    for line in lines:
+        upper = line.upper()
+        if not result["serial"] and ("VIN" in upper or "CHASIS" in upper or "SERIAL" in upper):
+            candidates = extract_vin_candidates(line)
             valid = next((c for c in candidates if is_valid_vin(c)), None)
             if valid:
                 result["serial"] = normalize_serial(valid)
-                break
-            if candidates:
-                result["serial"] = normalize_serial(candidates[0])
-                break
+        if not result["plate"] and "PLACA" in upper:
+            plates = extract_plate_candidates(line)
+            plate = normalize_plate(plates[0]) if plates else None
+            if plate:
+                result["plate"] = plate
+        if result["serial"] and result["plate"]:
+            break
 
     return result
 
 
-def merge_invoice_textract_hint(model_result: Dict[str, Any], textract_hint: Dict[str, Optional[str]]) -> Dict[str, Any]:
-    merged = dict(model_result)
-    hint_serial = normalize_serial(textract_hint.get("serial"))
-    hint_plate = normalize_plate(textract_hint.get("plate"))
+def infer_document_valid_from_lines(slot: str, lines: list[str]) -> bool:
+    joined = " ".join(lines).upper()
+    if slot == "invoice":
+        return "FACTURA" in joined
+    if slot == "certificate_of_origin":
+        return ("CERTIFICADO" in joined and "ORIGEN" in joined) or "CERTIFICATE OF ORIGIN" in joined
+    return False
 
-    if hint_serial:
-        merged["serial"] = hint_serial
-    if hint_plate and not merged.get("plate"):
-        merged["plate"] = hint_plate
-    return merged
+
+def extract_document_with_textract(slot: str, filename: str, document: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        file_bytes = get_document_bytes(filename, document)
+        resp = analyze_textract_document(file_bytes)
+        blocks = resp.get("Blocks", [])
+        lines = [normalize_text(b.get("Text")) for b in blocks if b.get("BlockType") == "LINE"]
+        document_valid = infer_document_valid_from_lines(slot, lines)
+        fields = extract_document_fields_from_textract(blocks)
+    except Exception as exc:
+        logger.warning("Error Textract slot=%s: %s", slot, exc)
+        # Fallback para no bloquear flujo cuando Textract no soporta el archivo
+        # (por ejemplo PDFs comprimidos con codificación no compatible).
+        fallback = invoke_bedrock_json_extractor(
+            slot=slot,
+            filename=filename,
+            document=document,
+        )
+        if bool(fallback.get("document_valid")):
+            fallback["reason"] = "Documento válido (fallback por formato no soportado en Textract)"
+        else:
+            fallback["reason"] = "No se pudo procesar documento automáticamente (formato no soportado en Textract)"
+        return fallback
+
+    plate = fields.get("plate")
+    serial = fields.get("serial")
+
+    if slot == "invoice":
+        if not document_valid:
+            reason = "No corresponde a una factura"
+        elif serial:
+            reason = "Factura válida"
+        else:
+            reason = "Factura válida sin serial (valor VIN visible pero no confiable para extracción automática)"
+    else:
+        if not document_valid:
+            reason = "No corresponde a un certificado de origen"
+        elif serial:
+            reason = "Certificado válido"
+        else:
+            reason = "Certificado válido sin serial"
+
+    return {
+        "document_valid": document_valid,
+        "plate": plate,
+        "serial": serial,
+        "reason": reason,
+    }
 
 
 def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
@@ -360,6 +407,14 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
             normalized_result["serial"] = None
             if normalized_result["document_valid"]:
                 normalized_result["reason"] = "Factura válida sin serial (valor VIN visible pero no confiable para extracción automática)"
+
+    # Misma regla conservadora para fotoserial: no mostrar serial dudoso.
+    if slot == "photo_serial":
+        photo_serial = normalized_result.get("serial")
+        if not is_valid_vin(photo_serial):
+            normalized_result["serial"] = None
+            if normalized_result["document_valid"]:
+                normalized_result["reason"] = "Fotoserial válido sin serial confiable (OCR ambiguo)"
 
     return normalized_result
 
@@ -439,9 +494,6 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
     user_message = make_user_message(slot, filename, file_bytes)
 
     system_prompt = build_system_prompt(slot)
-    invoice_textract_hint: Dict[str, Optional[str]] = {"plate": None, "serial": None}
-    if slot == "invoice":
-        invoice_textract_hint = extract_invoice_fields_with_textract(file_bytes)
 
     try:
         resp = bedrock.converse(
@@ -456,19 +508,9 @@ def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, 
         )
         raw_text = extract_text_from_bedrock_response(resp)
         logger.info("Respuesta Bedrock slot=%s raw=%s", slot, raw_text)
-        parsed = safe_json_loads(raw_text)
-        if slot == "invoice":
-            parsed = merge_invoice_textract_hint(parsed, invoice_textract_hint)
-        return parsed
+        return safe_json_loads(raw_text)
     except (ClientError, BotoCoreError, ValueError, json.JSONDecodeError) as exc:
         logger.exception("Error invocando Bedrock para slot=%s", slot)
-        if slot == "invoice" and invoice_textract_hint.get("serial"):
-            return {
-                "document_valid": True,
-                "plate": invoice_textract_hint.get("plate"),
-                "serial": invoice_textract_hint.get("serial"),
-                "reason": "Factura válida (extraída con Textract)",
-            }
         return {
             "document_valid": False,
             "plate": None,
@@ -726,11 +768,18 @@ def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             },
         )
 
-    result = invoke_bedrock_json_extractor(
-        slot=slot,
-        filename=filename,
-        document=doc,
-    )
+    if slot in {"invoice", "certificate_of_origin"}:
+        result = extract_document_with_textract(
+            slot=slot,
+            filename=filename,
+            document=doc,
+        )
+    else:
+        result = invoke_bedrock_json_extractor(
+            slot=slot,
+            filename=filename,
+            document=doc,
+        )
     return slot, sanitize_slot_result(slot, result)
 
 
