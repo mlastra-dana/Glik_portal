@@ -22,6 +22,12 @@ const IMAGE_SLOTS: Array<Extract<DocumentType, 'photo_plate' | 'photo_serial'>> 
 const EXPEDIENT_ID = 'EXP-LOGISTICA-001';
 const isDocumentSlot = (slot: DocumentType): slot is (typeof DOCUMENT_SLOTS)[number] => DOCUMENT_SLOTS.includes(slot as (typeof DOCUMENT_SLOTS)[number]);
 const isImageSlot = (slot: DocumentType): slot is (typeof IMAGE_SLOTS)[number] => IMAGE_SLOTS.includes(slot as (typeof IMAGE_SLOTS)[number]);
+const slotLabel: Record<DocumentType, string> = {
+  invoice: 'Factura',
+  certificate_of_origin: 'Certificado de origen',
+  photo_plate: 'Fotoplaca',
+  photo_serial: 'Fotoserial'
+};
 
 const ValidationPortalPage = () => {
   const [activeScreen, setActiveScreen] = useState<'documents' | 'images'>('documents');
@@ -90,6 +96,13 @@ const ValidationPortalPage = () => {
       ? 'Validando imágenes...'
       : phaseLoading.compare
         ? 'Comparando expediente...'
+        : '';
+  const activePhaseDetail = phaseLoading.validateDocuments
+    ? 'Procesando Factura y Certificado de origen.'
+    : phaseLoading.validateImages
+      ? 'Procesando Fotoplaca y Fotoserial.'
+      : phaseLoading.compare
+        ? 'Consolidando coincidencia de placa y serial.'
         : '';
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
@@ -260,10 +273,8 @@ const ValidationPortalPage = () => {
       if (documentsSignature === lastAutoDocumentsSignature) {
         return;
       }
-      const success = await handleValidateDocuments();
-      if (success) {
-        setLastAutoDocumentsSignature(documentsSignature);
-      }
+      setLastAutoDocumentsSignature(documentsSignature);
+      await handleValidateDocuments();
     };
     void runAutoDocumentsValidation();
   }, [canValidateDocuments, documentsSignature, lastAutoDocumentsSignature, phaseCompleted.validateDocuments]);
@@ -276,10 +287,8 @@ const ValidationPortalPage = () => {
       if (imagesSignature === lastAutoImagesSignature) {
         return;
       }
-      const success = await handleValidateImages();
-      if (success) {
-        setLastAutoImagesSignature(imagesSignature);
-      }
+      setLastAutoImagesSignature(imagesSignature);
+      await handleValidateImages();
     };
     void runAutoImagesValidation();
   }, [canValidateImages, imagesSignature, lastAutoImagesSignature, phaseCompleted.validateImages]);
@@ -393,6 +402,7 @@ const ValidationPortalPage = () => {
                   style={{ width: `${progressValue}%` }}
                 />
               </div>
+              {activePhaseDetail ? <p className="mt-2 text-xs text-slate-600">{activePhaseDetail}</p> : null}
             </div>
           ) : null}
           {phaseErrors.upload ? <p className="mt-2 text-sm text-rose-700">Error de carga: {phaseErrors.upload}</p> : null}
@@ -407,17 +417,46 @@ const ValidationPortalPage = () => {
 
         <div className="grid gap-4 md:grid-cols-2">
           {visibleDocuments.map((document) => (
+            (() => {
+              const isUploading = uploadingBySlot[document.type];
+              const isPhaseValidating =
+                (phaseLoading.validateDocuments && isDocumentSlot(document.type)) ||
+                (phaseLoading.validateImages && isImageSlot(document.type));
+              const missingPairText =
+                document.type === 'invoice' && document.file
+                  ? filesBySlot.certificate_of_origin
+                    ? ''
+                    : 'Esperando Certificado de origen para iniciar validación documental.'
+                  : document.type === 'certificate_of_origin' && document.file
+                    ? filesBySlot.invoice
+                      ? ''
+                      : 'Esperando Factura para iniciar validación documental.'
+                    : document.type === 'photo_plate' && document.file
+                      ? filesBySlot.photo_serial
+                        ? ''
+                        : 'Esperando Fotoserial para iniciar validación de imágenes.'
+                      : document.type === 'photo_serial' && document.file
+                        ? filesBySlot.photo_plate
+                          ? ''
+                          : 'Esperando Fotoplaca para iniciar validación de imágenes.'
+                        : '';
+              const activityText = isUploading
+                ? `Subiendo ${slotLabel[document.type]}...`
+                : isPhaseValidating
+                  ? `Validando ${slotLabel[document.type]} en Lambda...`
+                  : '';
+              return (
             <UploadCard
               key={document.type}
               document={document}
               onSelectFile={handleSelectFile}
               onClear={handleClearFile}
-              isValidating={
-                uploadingBySlot[document.type] ||
-                (phaseLoading.validateDocuments && isDocumentSlot(document.type)) ||
-                (phaseLoading.validateImages && isImageSlot(document.type))
-              }
+              isValidating={Boolean(activityText)}
+              activityText={activityText}
+              helperText={missingPairText}
             />
+              );
+            })()
           ))}
         </div>
 

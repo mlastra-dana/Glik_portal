@@ -7,6 +7,8 @@ interface UploadCardProps {
   onSelectFile: (type: UploadedDocument['type'], file: File) => void;
   onClear: (type: UploadedDocument['type']) => void;
   isValidating?: boolean;
+  activityText?: string;
+  helperText?: string;
 }
 
 const iconByDocument: Record<DocumentType, JSX.Element> = {
@@ -38,7 +40,7 @@ const iconByDocument: Record<DocumentType, JSX.Element> = {
   )
 };
 
-const UploadCard = ({ document, onSelectFile, onClear, isValidating = false }: UploadCardProps) => {
+const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, activityText, helperText }: UploadCardProps) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const handleOpenFilePicker = () => {
@@ -105,7 +107,18 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false }: U
         accept=".pdf,.png,.jpg,.jpeg"
       />
 
+      {isValidating ? (
+        <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-purple-100">
+          <div className="h-full w-1/3 animate-pulse rounded-full bg-glik-primary" />
+        </div>
+      ) : null}
       {document.errorMessage ? <p className="mt-2 text-xs font-medium text-rose-600">{document.errorMessage}</p> : null}
+      {!document.errorMessage && activityText ? (
+        <p className="mt-2 text-xs font-medium text-glik-primary">{activityText}</p>
+      ) : null}
+      {!document.errorMessage && !activityText && helperText ? (
+        <p className="mt-2 text-xs font-medium text-slate-500">{helperText}</p>
+      ) : null}
     </article>
   );
 };
