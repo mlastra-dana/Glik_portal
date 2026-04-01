@@ -38,6 +38,34 @@ const ensureApiUrl = () => {
 
 const normalizePlate = (value?: string | null) => (value ? value.replace(/\s+/g, '').toUpperCase().trim() : null);
 const normalizeSerial = (value?: string | null) => (value ? value.replace(/[^A-Z0-9]/gi, '').toUpperCase().trim() : null);
+const ocrEquivalentMap: Record<string, string> = {
+  '0': 'O',
+  O: '0',
+  '1': 'I',
+  I: '1',
+  '2': 'Z',
+  Z: '2',
+  '5': 'S',
+  S: '5',
+  '6': 'G',
+  G: '6',
+  '8': 'B',
+  B: '8'
+};
+
+const areEquivalentWithOcrNoise = (a: string, b: string): boolean => {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (left === right) continue;
+    if (ocrEquivalentMap[left] === right || ocrEquivalentMap[right] === left) continue;
+    return false;
+  }
+  return true;
+};
 
 const toBase64 = (file: File): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -235,8 +263,16 @@ const validateSingleSlot = async (slot: DocumentType, file: File): Promise<SlotE
 
 const compareTwo = (a?: string | null, b?: string | null, mode: 'plate' | 'serial' = 'plate'): boolean | null => {
   if (!a || !b) return null;
-  if (mode === 'plate') return normalizePlate(a) === normalizePlate(b);
-  return normalizeSerial(a) === normalizeSerial(b);
+  if (mode === 'plate') {
+    const left = normalizePlate(a);
+    const right = normalizePlate(b);
+    if (!left || !right) return null;
+    return areEquivalentWithOcrNoise(left, right);
+  }
+  const left = normalizeSerial(a);
+  const right = normalizeSerial(b);
+  if (!left || !right) return null;
+  return areEquivalentWithOcrNoise(left, right);
 };
 
 const compareInFrontend = (
@@ -256,16 +292,14 @@ const compareInFrontend = (
   const certificateSerial = normalizeSerial(certificate?.serial);
   const imageSerial = normalizeSerial(photoSerial?.serial);
 
-  // Regla de negocio principal:
-  // 1) Fotoplaca vs placa documental de referencia (certificado, o factura como respaldo)
-  // 2) Fotoserial vs serial documental de referencia (certificado, o factura como respaldo)
-  const referencePlate = certificatePlate ?? invoicePlate;
-  const referenceSerial = certificateSerial ?? invoiceSerial;
-  const referencePlateSource = certificatePlate ? 'certificado de origen' : invoicePlate ? 'factura' : null;
-  const referenceSerialSource = certificateSerial ? 'certificado de origen' : invoiceSerial ? 'factura' : null;
-
-  const plateMatch = compareTwo(referencePlate, imagePlate, 'plate');
-  const serialMatch = compareTwo(referenceSerial, imageSerial, 'serial');
+  // Regla de negocio:
+  // 1) Factura vs certificado de origen
+  // 2) Fotoplaca vs placa del certificado de origen
+  // 3) Fotoserial vs serial del certificado de origen
+  const invoicePlateMatch = compareTwo(invoicePlate, certificatePlate, 'plate');
+  const invoiceSerialMatch = compareTwo(invoiceSerial, certificateSerial, 'serial');
+  const plateMatch = compareTwo(certificatePlate, imagePlate, 'plate');
+  const serialMatch = compareTwo(certificateSerial, imageSerial, 'serial');
 
   const invoiceValid = Boolean(invoice?.document_valid);
   const certificateValid = Boolean(certificate?.document_valid);
@@ -276,6 +310,8 @@ const compareInFrontend = (
     certificateValid &&
     photoPlateValid &&
     photoSerialValid &&
+    invoicePlateMatch === true &&
+    invoiceSerialMatch === true &&
     plateMatch === true &&
     serialMatch === true;
 
@@ -289,18 +325,32 @@ const compareInFrontend = (
   messages.push(photoPlateValid ? 'La fotoplaca es válida.' : `Fotoplaca: ${photoPlate?.reason ?? 'No válida.'}`);
   messages.push(photoSerialValid ? 'El fotoserial es válido.' : `Fotoserial: ${photoSerial?.reason ?? 'No válido.'}`);
   messages.push(
+    invoicePlateMatch === true
+      ? 'La placa de la factura coincide con el certificado de origen.'
+      : invoicePlateMatch === false
+        ? 'La placa de la factura no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar placa entre factura y certificado.'
+  );
+  messages.push(
+    invoiceSerialMatch === true
+      ? 'El serial de la factura coincide con el certificado de origen.'
+      : invoiceSerialMatch === false
+        ? 'El serial de la factura no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar serial entre factura y certificado.'
+  );
+  messages.push(
     plateMatch === true
-      ? `La placa de fotoplaca coincide con el ${referencePlateSource ?? 'documento de referencia'}.`
+      ? 'La placa de fotoplaca coincide con el certificado de origen.'
       : plateMatch === false
-        ? `La placa de fotoplaca no coincide con el ${referencePlateSource ?? 'documento de referencia'}.`
-        : 'No hay datos suficientes para validar placa (documentos/fotoplaca).'
+        ? 'La placa de fotoplaca no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar placa (certificado/fotoplaca).'
   );
   messages.push(
     serialMatch === true
-      ? `El serial de fotoserial coincide con el ${referenceSerialSource ?? 'documento de referencia'}.`
+      ? 'El serial de fotoserial coincide con el certificado de origen.'
       : serialMatch === false
-        ? `El serial de fotoserial no coincide con el ${referenceSerialSource ?? 'documento de referencia'}.`
-        : 'No hay datos suficientes para validar serial (documentos/fotoserial).'
+        ? 'El serial de fotoserial no coincide con el certificado de origen.'
+        : 'No hay datos suficientes para validar serial (certificado/fotoserial).'
   );
 
   return {

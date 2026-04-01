@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import ProcessStepper from '../components/validation/ProcessStepper';
-import ResultPanel from '../components/validation/ResultPanel';
 import UploadCard from '../components/validation/UploadCard';
 import { documentSlotsSeed } from '../mocks/documents';
-import { compareExpedient, toValidationResult, validateDocuments, validateImages } from '../services/api';
+import { compareExpedient, validateDocuments, validateImages } from '../services/api';
 import { SlotExtraction } from '../types/api';
-import { DocumentType, UploadedDocument, ValidationResult } from '../types/validation';
+import { DocumentType, UploadedDocument } from '../types/validation';
 
 const resetDocument = (doc: UploadedDocument): UploadedDocument => ({
   ...doc,
@@ -32,17 +30,51 @@ const slotLabel: Record<DocumentType, string> = {
   photo_plate: 'Fotoplaca',
   photo_serial: 'Fotoserial'
 };
+const extractionDisplayOrder: Record<DocumentType, number> = {
+  certificate_of_origin: 0,
+  invoice: 1,
+  photo_plate: 2,
+  photo_serial: 3
+};
 
 const normalizePlate = (value?: string | null) => (value ? value.replace(/\s+/g, '').toUpperCase().trim() : null);
 const normalizeSerial = (value?: string | null) => (value ? value.replace(/[^A-Z0-9]/gi, '').toUpperCase().trim() : null);
+const ocrEquivalentMap: Record<string, string> = {
+  '0': 'O',
+  O: '0',
+  '1': 'I',
+  I: '1',
+  '2': 'Z',
+  Z: '2',
+  '5': 'S',
+  S: '5',
+  '6': 'G',
+  G: '6',
+  '8': 'B',
+  B: '8'
+};
+
+const areEquivalentWithOcrNoise = (a?: string | null, b?: string | null): boolean => {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+
+  for (let i = 0; i < a.length; i += 1) {
+    const left = a[i];
+    const right = b[i];
+    if (left === right) continue;
+    if (ocrEquivalentMap[left] === right || ocrEquivalentMap[right] === left) continue;
+    return false;
+  }
+  return true;
+};
 
 const ValidationPortalPage = () => {
-  const [flowStep, setFlowStep] = useState<1 | 2 | 3>(1);
+  const [flowStep, setFlowStep] = useState<1 | 2>(1);
   const [agentFirstName, setAgentFirstName] = useState('');
   const [agentLastName, setAgentLastName] = useState('');
   const [documents, setDocuments] = useState<UploadedDocument[]>(documentSlotsSeed);
   const [rawExtractions, setRawExtractions] = useState<Partial<Record<DocumentType, SlotExtraction>>>({});
-  const [result, setResult] = useState<ValidationResult | null>(null);
 
   const [uploadingBySlot, setUploadingBySlot] = useState<Record<DocumentType, boolean>>({
     invoice: false,
@@ -65,7 +97,6 @@ const ValidationPortalPage = () => {
     validateDocuments: false,
     validateImages: false
   });
-  const [progressValue, setProgressValue] = useState(0);
 
   const filesBySlot = useMemo(
     () =>
@@ -74,9 +105,11 @@ const ValidationPortalPage = () => {
       >,
     [documents]
   );
+  const orderedDocumentsForExtraction = useMemo(
+    () => [...documents].sort((a, b) => extractionDisplayOrder[a.type] - extractionDisplayOrder[b.type]),
+    [documents]
+  );
 
-  const currentStep: 1 | 2 | 3 = flowStep;
-  const isProcessing = Object.values(uploadingBySlot).some(Boolean) || Object.values(phaseLoading).some(Boolean);
   const canContinueToValidation = agentFirstName.trim().length > 0 && agentLastName.trim().length > 0;
 
   const canValidateDocuments = useMemo(
@@ -91,14 +124,6 @@ const ValidationPortalPage = () => {
     () => IMAGE_SLOTS.every((slot) => Boolean(filesBySlot[slot])) && !phaseLoading.validateImages && !phaseLoading.compare,
     [filesBySlot, phaseLoading.compare, phaseLoading.validateImages]
   );
-
-  const activePhaseLabel = phaseLoading.validateDocuments
-    ? 'Validando documentos...'
-    : phaseLoading.validateImages
-      ? 'Validando imágenes...'
-      : phaseLoading.compare
-        ? 'Comparando expediente...'
-        : '';
 
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
     setDocuments((prev) => prev.map((doc) => (doc.type === slot ? { ...doc, ...patch } : doc)));
@@ -124,21 +149,16 @@ const ValidationPortalPage = () => {
     setPhaseLoading((prev) => ({ ...prev, compare: true }));
     setPhaseErrors((prev) => ({ ...prev, compare: '' }));
     try {
-      const compareResponse = await compareExpedient(EXPEDIENT_ID, mergedExtractions);
-      setResult(toValidationResult(compareResponse));
-      setFlowStep(3);
+      await compareExpedient(EXPEDIENT_ID, mergedExtractions);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Error no controlado en comparación.';
       setPhaseErrors((prev) => ({ ...prev, compare: message }));
-      setResult(null);
     } finally {
       setPhaseLoading((prev) => ({ ...prev, compare: false }));
     }
   };
 
   const handleSelectFile = (type: DocumentType, file: File) => {
-    if (flowStep === 3) setFlowStep(2);
-    setResult(null);
     setPhaseErrors((prev) => ({ ...prev, upload: '' }));
     setUploadingBySlot((prev) => ({ ...prev, [type]: true }));
     setDocumentStatus(type, {
@@ -160,8 +180,6 @@ const ValidationPortalPage = () => {
   };
 
   const handleClearFile = (type: DocumentType) => {
-    if (flowStep === 3) setFlowStep(2);
-    setResult(null);
     setRawExtractions((prev) => {
       const next = { ...prev };
       delete next[type];
@@ -230,53 +248,6 @@ const ValidationPortalPage = () => {
     }
   };
 
-  const handleResetFlow = () => {
-    setFlowStep(1);
-    setAgentFirstName('');
-    setAgentLastName('');
-    setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
-    setRawExtractions({});
-    setResult(null);
-    setPhaseErrors({
-      upload: '',
-      validateDocuments: '',
-      validateImages: '',
-      compare: ''
-    });
-    setPhaseLoading({
-      validateDocuments: false,
-      validateImages: false,
-      compare: false
-    });
-    setUploadingBySlot({
-      invoice: false,
-      certificate_of_origin: false,
-      photo_plate: false,
-      photo_serial: false
-    });
-    setPhaseCompleted({
-      validateDocuments: false,
-      validateImages: false
-    });
-  };
-
-  useEffect(() => {
-    if (!isProcessing) {
-      setProgressValue(0);
-      return;
-    }
-
-    setProgressValue(8);
-    const id = window.setInterval(() => {
-      setProgressValue((prev) => {
-        if (prev >= 92) return prev;
-        return prev + 6;
-      });
-    }, 450);
-
-    return () => window.clearInterval(id);
-  }, [isProcessing]);
-
   const renderUploadGrid = (slots: UploadedDocument[]) => (
     <div className="grid gap-4 md:grid-cols-2">
       {slots.map((document) => {
@@ -338,13 +309,12 @@ const ValidationPortalPage = () => {
             Salir
           </Link>
         </div>
-        <ProcessStepper currentStep={currentStep} />
       </div>
 
       <div className="mt-5 space-y-5">
         {flowStep === 1 ? (
           <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
-            <h2 className="font-display text-lg font-bold text-glik-secondary">Paso 1: Datos del agente</h2>
+            <h2 className="font-display text-lg font-bold text-glik-secondary">Datos del agente</h2>
             <p className="mt-1 text-sm text-slate-600">Ingrese nombre y apellido para iniciar la validación del expediente.</p>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <label className="space-y-1 text-sm font-medium text-slate-700">
@@ -386,34 +356,14 @@ const ValidationPortalPage = () => {
             <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-soft">
               <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">Paso 2: Validación de expediente</span>
+                  <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">Validación de expediente</span>
                   <span className="rounded-full bg-slate-100 px-3 py-1 font-medium text-slate-600">
                     Agente: {agentFirstName} {agentLastName}
                   </span>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <button type="button" onClick={handleResetFlow} className="btn-secondary">
-                    Reiniciar flujo
-                  </button>
                 </div>
               </div>
-
-              <div className="mt-2 text-sm text-slate-600">
-                {Object.values(uploadingBySlot).some(Boolean) ? <p>Subiendo archivo...</p> : null}
-                {phaseLoading.compare ? <p>Comparando expediente...</p> : null}
-              </div>
-
-              {isProcessing ? (
-                <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
-                  <div className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-700">
-                    <span>{activePhaseLabel || 'Procesando...'}</span>
-                    <span>{progressValue}%</span>
-                  </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-slate-200">
-                    <div className="h-full rounded-full bg-glik-primary transition-all duration-300" style={{ width: `${progressValue}%` }} />
-                  </div>
-                </div>
-              ) : null}
 
               {phaseErrors.upload ? <p className="mt-2 text-sm text-rose-700">Error de carga: {phaseErrors.upload}</p> : null}
               {phaseErrors.validateDocuments ? (
@@ -431,9 +381,6 @@ const ValidationPortalPage = () => {
                   <div className="flex items-center justify-between">
                     <h3 className="font-display text-lg font-bold text-glik-secondary">Documentos</h3>
                     <div className="flex items-center gap-3">
-                      {!isProcessing && !canValidateDocuments ? (
-                        <span className="text-sm text-slate-500">Cargue Factura y Certificado para validar.</span>
-                      ) : null}
                       <button
                         type="button"
                         onClick={handleValidateDocuments}
@@ -444,6 +391,10 @@ const ValidationPortalPage = () => {
                       </button>
                     </div>
                   </div>
+                  <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900">
+                    Cargue <strong>Factura</strong> y <strong>Certificado de origen</strong>. Cuando ambos estén cargados,
+                    presione <strong>Validar documentos</strong>.
+                  </div>
                   <div className="mt-4">{renderUploadGrid(documents.filter((doc) => isDocumentSlot(doc.type)))}</div>
                 </div>
 
@@ -451,9 +402,6 @@ const ValidationPortalPage = () => {
                   <div className="flex items-center justify-between">
                     <h3 className="font-display text-lg font-bold text-glik-secondary">Imágenes</h3>
                     <div className="flex items-center gap-3">
-                      {!isProcessing && !canValidateImages ? (
-                        <span className="text-sm text-slate-500">Cargue Fotoplaca y Fotoserial para validar.</span>
-                      ) : null}
                       <button
                         type="button"
                         onClick={handleValidateImages}
@@ -463,6 +411,10 @@ const ValidationPortalPage = () => {
                         {phaseLoading.validateImages ? 'Validando imágenes...' : 'Validar imágenes'}
                       </button>
                     </div>
+                  </div>
+                  <div className="mt-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-sm font-medium text-sky-900">
+                    Cargue <strong>Fotoplaca</strong> y <strong>Fotoserial</strong>. Cuando ambas estén cargadas, presione
+                    <strong> Validar imágenes</strong>.
                   </div>
                   <div className="mt-4">{renderUploadGrid(documents.filter((doc) => isImageSlot(doc.type)))}</div>
                 </div>
@@ -483,7 +435,7 @@ const ValidationPortalPage = () => {
                       </tr>
                     </thead>
                     <tbody>
-                      {documents.map((doc) => {
+                      {orderedDocumentsForExtraction.map((doc) => {
                         const extraction = rawExtractions[doc.type];
                         const plate = extraction?.plate ?? null;
                         const serial = extraction?.serial ?? null;
@@ -494,8 +446,8 @@ const ValidationPortalPage = () => {
                         const certificatePlate = normalizePlate(certificateRef?.plate);
                         const invoiceSerial = normalizeSerial(invoiceRef?.serial);
                         const certificateSerial = normalizeSerial(certificateRef?.serial);
-                        const referencePlate = certificatePlate ?? invoicePlate;
-                        const referenceSerial = certificateSerial ?? invoiceSerial;
+                        const referencePlate = certificatePlate;
+                        const referenceSerial = certificateSerial;
 
                         const datumLabel =
                           doc.type === 'photo_plate' ? 'Placa' : doc.type === 'photo_serial' ? 'Serial' : 'Placa / Serial';
@@ -509,13 +461,35 @@ const ValidationPortalPage = () => {
                         let statusLabel = 'Sin dato';
                         let statusClass = 'bg-slate-200 text-slate-600';
 
-                        if (doc.type === 'photo_plate') {
+                        if (doc.type === 'invoice') {
+                          if (!isDetected || !invoicePlate || !invoiceSerial) {
+                            statusLabel = 'Sin dato';
+                          } else if (!certificatePlate || !certificateSerial) {
+                            statusLabel = 'Sin referencia';
+                          } else if (
+                            areEquivalentWithOcrNoise(invoicePlate, certificatePlate) &&
+                            areEquivalentWithOcrNoise(invoiceSerial, certificateSerial)
+                          ) {
+                            statusLabel = 'Coincide';
+                            statusClass = 'bg-emerald-100 text-emerald-700';
+                          } else {
+                            statusLabel = 'No coincide';
+                            statusClass = 'bg-rose-100 text-rose-700';
+                          }
+                        } else if (doc.type === 'certificate_of_origin') {
+                          if (!isDetected) {
+                            statusLabel = 'Sin dato';
+                          } else {
+                            statusLabel = 'Referencia';
+                            statusClass = 'bg-sky-100 text-sky-700';
+                          }
+                        } else if (doc.type === 'photo_plate') {
                           const current = normalizePlate(plate);
                           if (!isDetected || !current) {
                             statusLabel = 'Sin dato';
                           } else if (!referencePlate) {
                             statusLabel = 'Sin referencia';
-                          } else if (current === referencePlate) {
+                          } else if (areEquivalentWithOcrNoise(current, referencePlate)) {
                             statusLabel = 'Coincide';
                             statusClass = 'bg-emerald-100 text-emerald-700';
                           } else {
@@ -528,19 +502,7 @@ const ValidationPortalPage = () => {
                             statusLabel = 'Sin dato';
                           } else if (!referenceSerial) {
                             statusLabel = 'Sin referencia';
-                          } else if (current === referenceSerial) {
-                            statusLabel = 'Coincide';
-                            statusClass = 'bg-emerald-100 text-emerald-700';
-                          } else {
-                            statusLabel = 'No coincide';
-                            statusClass = 'bg-rose-100 text-rose-700';
-                          }
-                        } else {
-                          if (!isDetected) {
-                            statusLabel = 'Sin dato';
-                          } else if (!invoicePlate || !certificatePlate || !invoiceSerial || !certificateSerial) {
-                            statusLabel = 'Sin referencia';
-                          } else if (invoicePlate === certificatePlate && invoiceSerial === certificateSerial) {
+                          } else if (areEquivalentWithOcrNoise(current, referenceSerial)) {
                             statusLabel = 'Coincide';
                             statusClass = 'bg-emerald-100 text-emerald-700';
                           } else {
@@ -568,7 +530,6 @@ const ValidationPortalPage = () => {
           </>
         ) : null}
 
-        {!isProcessing && result && flowStep === 3 ? <ResultPanel result={result} onReset={handleResetFlow} /> : null}
       </div>
     </section>
   );

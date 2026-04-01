@@ -1,11 +1,10 @@
 interface ProcessStepperProps {
-  currentStep: 1 | 2 | 3;
+  currentStep: 1 | 2;
 }
 
 const steps = [
   { id: 1, label: 'Agente' },
-  { id: 2, label: 'Validación' },
-  { id: 3, label: 'Resultado' }
+  { id: 2, label: 'Validación' }
 ] as const;
 
 const ProcessStepper = ({ currentStep }: ProcessStepperProps) => {
