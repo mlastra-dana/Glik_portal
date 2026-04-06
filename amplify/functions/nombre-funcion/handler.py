@@ -183,6 +183,42 @@ def normalize_serial(value: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def levenshtein_distance(a: str, b: str) -> int:
+    if a == b:
+        return 0
+    if not a:
+        return len(b)
+    if not b:
+        return len(a)
+
+    prev = list(range(len(b) + 1))
+    curr = [0] * (len(b) + 1)
+
+    for i, ca in enumerate(a, start=1):
+        curr[0] = i
+        for j, cb in enumerate(b, start=1):
+            cost = 0 if ca == cb else 1
+            curr[j] = min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost)
+        prev, curr = curr, prev
+    return prev[len(b)]
+
+
+def should_snap_serial_to_reference(extracted: Optional[str], reference: Optional[str]) -> bool:
+    ex = normalize_serial(extracted)
+    ref = normalize_serial(reference)
+    if not ex or not ref:
+        return False
+    if len(ex) != 17 or len(ref) != 17:
+        return False
+    if not is_vin_like(ex) or not is_vin_like(ref):
+        return False
+    if ex[:3] != ref[:3]:
+        return False
+    if ex[-4:] != ref[-4:]:
+        return False
+    return levenshtein_distance(ex, ref) <= 2
+
+
 def normalize_text(value: Optional[str]) -> str:
     if not value:
         return ""
@@ -454,7 +490,7 @@ def extract_document_with_textract(slot: str, filename: str, document: Dict[str,
     }
 
 
-def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
+def sanitize_slot_result(slot: str, result: Dict[str, Any], reference_serial: Optional[str] = None) -> Dict[str, Any]:
     normalized_result = {
         "document_valid": bool(result.get("document_valid")),
         "plate": normalize_plate(result.get("plate")),
@@ -478,10 +514,18 @@ def sanitize_slot_result(slot: str, result: Dict[str, Any]) -> Dict[str, Any]:
     # Misma regla conservadora para fotoserial: no mostrar serial dudoso.
     if slot == "photo_serial":
         photo_serial = normalized_result.get("serial")
+        reference = normalize_serial(reference_serial)
+
+        if should_snap_serial_to_reference(photo_serial, reference):
+            normalized_result["serial"] = reference
+            if normalized_result["document_valid"]:
+                normalized_result["reason"] = "Fotoserial válido"
+
+        photo_serial = normalized_result.get("serial")
         if not is_valid_vin(photo_serial):
             normalized_result["serial"] = None
             if normalized_result["document_valid"]:
-                normalized_result["reason"] = "Fotoserial válido sin serial confiable (OCR ambiguo)"
+                normalized_result["reason"] = "Serial no legible con suficiente confianza"
 
     return normalized_result
 
@@ -509,20 +553,28 @@ def extract_text_from_bedrock_response(resp: Dict[str, Any]) -> str:
         raise ValueError(f"No se pudo leer la respuesta de Bedrock: {exc}") from exc
 
 
-def make_user_message(slot: str, filename: str, file_bytes: bytes) -> Dict[str, Any]:
+def make_user_message(
+    slot: str, filename: str, file_bytes: bytes, reference_serial: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Construye el bloque de mensaje para Converse.
     - Para PDF: usa document + text
     - Para imagen: usa image + text
     """
     ext = get_extension(filename)
+    normalized_reference = normalize_serial(reference_serial)
+    reference_hint = (
+        f" Serial de referencia para validar lectura: {normalized_reference}."
+        if slot == "photo_serial" and normalized_reference
+        else ""
+    )
 
     if ext in {"pdf"}:
         return {
             "role": "user",
             "content": [
                 {
-                    "text": f"Analiza este documento para el slot '{slot}' y responde según las instrucciones."
+                    "text": f"Analiza este documento para el slot '{slot}' y responde según las instrucciones.{reference_hint}"
                 },
                 {
                     "document": {
@@ -539,7 +591,7 @@ def make_user_message(slot: str, filename: str, file_bytes: bytes) -> Dict[str, 
             "role": "user",
             "content": [
                 {
-                    "text": f"Analiza esta imagen para el slot '{slot}' y responde según las instrucciones."
+                    "text": f"Analiza esta imagen para el slot '{slot}' y responde según las instrucciones.{reference_hint}"
                 },
                 {
                     "image": {
@@ -553,12 +605,14 @@ def make_user_message(slot: str, filename: str, file_bytes: bytes) -> Dict[str, 
     raise ValueError(f"Extensión no soportada para {filename}: {ext}")
 
 
-def invoke_bedrock_json_extractor(slot: str, filename: str, document: Dict[str, Any]) -> Dict[str, Any]:
+def invoke_bedrock_json_extractor(
+    slot: str, filename: str, document: Dict[str, Any], reference_serial: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Invoca Bedrock para un slot específico y espera un JSON estricto.
     """
     file_bytes = get_document_bytes(filename, document)
-    user_message = make_user_message(slot, filename, file_bytes)
+    user_message = make_user_message(slot, filename, file_bytes, reference_serial=reference_serial)
 
     system_prompt = build_system_prompt(slot)
 
@@ -819,7 +873,7 @@ def aggregate_match(*values: Optional[bool]) -> Optional[bool]:
     return True
 
 
-def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+def process_slot(slot: str, doc: Dict[str, Any], reference_serial: Optional[str] = None) -> Tuple[str, Dict[str, Any]]:
     filename = doc.get("filename")
     has_base64 = bool(doc.get("content_base64"))
     has_s3_ref = bool(doc.get("s3_key"))
@@ -846,20 +900,22 @@ def process_slot(slot: str, doc: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
             slot=slot,
             filename=filename,
             document=doc,
+            reference_serial=reference_serial,
         )
-    return slot, sanitize_slot_result(slot, result)
+    return slot, sanitize_slot_result(slot, result, reference_serial=reference_serial)
 
 
 def handle_validate_slot(body: Dict[str, Any]) -> Dict[str, Any]:
     slot = body.get("slot")
     document = body.get("document") or {}
     expedient_id = body.get("expedient_id") or "sin_expediente"
+    reference_serial = body.get("reference_serial")
 
     valid_slots = {"invoice", "certificate_of_origin", "photo_plate", "photo_serial"}
     if slot not in valid_slots:
         return response(400, {"success": False, "message": "slot inválido"})
 
-    slot_name, result = process_slot(slot, document)
+    slot_name, result = process_slot(slot, document, reference_serial=reference_serial)
     artifact_key = (
         f"extractions/{sanitize_key_fragment(str(expedient_id))}/slots/"
         f"{sanitize_key_fragment(slot_name)}_{uuid.uuid4().hex}.json"
@@ -968,6 +1024,14 @@ def lambda_handler(event, context):
     invoice_serial = normalize_serial(extraction_results["invoice"].get("serial"))
     cert_serial = normalize_serial(extraction_results["certificate_of_origin"].get("serial"))
     photo_serial = normalize_serial(extraction_results["photo_serial"].get("serial"))
+
+    # Ajuste guiado por referencia: si el fotoserial es muy cercano al serial del certificado,
+    # preferimos el valor de referencia para reducir errores OCR de 1-2 caracteres.
+    if should_snap_serial_to_reference(photo_serial, cert_serial):
+        extraction_results["photo_serial"]["serial"] = cert_serial
+        if extraction_results["photo_serial"].get("document_valid"):
+            extraction_results["photo_serial"]["reason"] = "Fotoserial válido"
+        photo_serial = cert_serial
 
     # Validaciones de tipo documental
     invoice_valid = bool(extraction_results["invoice"].get("document_valid"))

@@ -22,12 +22,38 @@ const fetchWithTimeout = async (
       throw new Error(timeoutMessage);
     }
     if (error instanceof TypeError) {
-      throw new Error('No se pudo conectar con el backend (posible CORS, URL inválida o red).');
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        throw new Error('No hay conexión a internet. Verifique su red e intente nuevamente.');
+      }
+      throw new Error('No se pudo conectar con el backend. Revise CORS, URL configurada y conectividad de red.');
     }
     throw error;
   } finally {
     window.clearTimeout(timeoutId);
   }
+};
+
+const httpStatusMessageMap: Record<number, string> = {
+  400: 'Solicitud inválida. Revise los datos enviados.',
+  401: 'No autorizado para ejecutar esta validación.',
+  403: 'Acceso denegado por permisos o política de seguridad.',
+  404: 'Servicio de validación no encontrado.',
+  405: 'Método HTTP no permitido para este endpoint.',
+  408: 'El backend tardó demasiado en responder.',
+  413: 'El archivo es demasiado pesado para procesarlo. Comprime el PDF/imagen o usa un archivo más liviano.',
+  415: 'Formato de archivo no soportado por el backend.',
+  422: 'No se pudo procesar el documento. Verifique que el archivo corresponda al tipo esperado.',
+  429: 'Demasiadas solicitudes. Intente nuevamente en unos segundos.',
+  500: 'Error interno del backend al validar el archivo.',
+  502: 'El backend no respondió correctamente.',
+  503: 'El servicio de validación no está disponible temporalmente.',
+  504: 'El backend excedió el tiempo de procesamiento.'
+};
+
+const getHttpErrorMessage = (status: number, backendMessage?: string | null) => {
+  const fallback = httpStatusMessageMap[status] ?? `Error validando archivo (HTTP ${status}).`;
+  if (!backendMessage || !backendMessage.trim()) return fallback;
+  return `${fallback} ${backendMessage.trim()}`;
 };
 
 const isAbsoluteUrl = (value: string) => /^https?:\/\//i.test(value);
@@ -135,13 +161,20 @@ const postDirect = async <TResponse>(payload: Record<string, unknown>, timeoutMs
     'Se agotó el tiempo en la validación del archivo.'
   );
 
-  const body = (await response.json()) as TResponse & { success?: boolean; message?: string; error?: string };
-  if (!response.ok || body.success === false) {
-    const baseMessage = body.message ?? 'Error validando archivo.';
-    const detail = body.error ? ` Detalle: ${body.error}` : '';
+  const rawBody = await response.text();
+  let body: (TResponse & { success?: boolean; message?: string; error?: string }) | null = null;
+  try {
+    body = rawBody ? ((JSON.parse(rawBody) as TResponse & { success?: boolean; message?: string; error?: string }) ?? null) : null;
+  } catch {
+    body = null;
+  }
+
+  if (!response.ok || body?.success === false) {
+    const baseMessage = getHttpErrorMessage(response.status, body?.message ?? null);
+    const detail = body?.error ? ` Detalle: ${body.error}` : '';
     throw new Error(`${baseMessage}${detail}`);
   }
-  return body as TResponse;
+  return (body ?? ({} as TResponse)) as TResponse;
 };
 
 type DocumentSlot = Extract<DocumentType, 'invoice' | 'certificate_of_origin'>;
@@ -151,6 +184,7 @@ type SlotValidationPayload = {
   action: 'validate_slot';
   slot: DocumentType;
   expedient_id?: string;
+  reference_serial?: string;
   document: {
     filename: string;
     content_base64: string;
@@ -233,12 +267,18 @@ const applyFilenamePlateHint = (slotResult: SlotExtraction, filename?: string | 
   };
 };
 
-const buildSlotPayload = async (slot: DocumentType, file: File, expedientId?: string): Promise<SlotValidationPayload> => {
+const buildSlotPayload = async (
+  slot: DocumentType,
+  file: File,
+  expedientId?: string,
+  referenceSerial?: string
+): Promise<SlotValidationPayload> => {
   const base64 = await toBase64(file);
   return {
     action: 'validate_slot',
     slot,
     expedient_id: expedientId,
+    reference_serial: referenceSerial,
     document: {
       filename: file.name,
       content_base64: base64,
@@ -274,9 +314,14 @@ const mapSlotValidationToExtraction = (slot: DocumentType, response: Record<stri
   };
 };
 
-const validateSingleSlot = async (slot: DocumentType, file: File, expedientId?: string): Promise<SlotExtraction> => {
+const validateSingleSlot = async (
+  slot: DocumentType,
+  file: File,
+  expedientId?: string,
+  options?: { referenceSerial?: string }
+): Promise<SlotExtraction> => {
   try {
-    const payload = await buildSlotPayload(slot, file, expedientId);
+    const payload = await buildSlotPayload(slot, file, expedientId, options?.referenceSerial);
     const response = (await postDirect<Record<string, unknown>>(payload, phaseTimeoutMs)) as Record<string, unknown>;
     const frontendRequired =
       typeof response.frontend_required === 'object' && response.frontend_required !== null
@@ -447,11 +492,14 @@ export const validateDocuments = async (
 
 export const validateImages = async (
   expedientId: string,
-  filesBySlot: Record<ImageSlot, File>
+  filesBySlot: Record<ImageSlot, File>,
+  options?: { referenceSerial?: string }
 ): Promise<ValidateImagesResponse> => {
   const [photoPlate, photoSerial] = await Promise.all([
     validateSingleSlot('photo_plate', filesBySlot.photo_plate, expedientId),
-    validateSingleSlot('photo_serial', filesBySlot.photo_serial, expedientId)
+    validateSingleSlot('photo_serial', filesBySlot.photo_serial, expedientId, {
+      referenceSerial: options?.referenceSerial
+    })
   ]);
   const frontendRequired = {
     photo_plate: photoPlate,

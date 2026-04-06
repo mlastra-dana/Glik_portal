@@ -1,6 +1,5 @@
 import { ChangeEvent, useRef } from 'react';
 import { DocumentType, UploadedDocument } from '../../types/validation';
-import StatusBadge from '../ui/StatusBadge';
 
 interface UploadCardProps {
   document: UploadedDocument;
@@ -42,6 +41,13 @@ const iconByDocument: Record<DocumentType, JSX.Element> = {
 
 const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, activityText, helperText }: UploadCardProps) => {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const isImageSlot = document.type === 'photo_plate' || document.type === 'photo_serial';
+  const statusBadge = {
+    pending: { label: 'Pendiente', className: 'bg-slate-100 text-slate-700' },
+    uploaded: { label: 'Cargado', className: 'bg-purple-100 text-purple-700' },
+    validated: { label: isImageSlot ? 'Imagen válida' : 'Documento válido', className: 'bg-emerald-100 text-emerald-700' },
+    error: { label: 'Error', className: 'bg-rose-100 text-rose-700' }
+  }[document.status];
 
   const handleOpenFilePicker = () => {
     inputRef.current?.click();
@@ -81,7 +87,7 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
               aria-label="Validando documento"
             />
           ) : null}
-          <StatusBadge status={document.status} />
+          <span className={`status-chip ${statusBadge.className}`}>{statusBadge.label}</span>
         </div>
       </div>
 
