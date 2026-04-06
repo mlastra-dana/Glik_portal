@@ -4,7 +4,7 @@ import { CompareExpedientResponse, SlotExtraction, ValidateDocumentsResponse, Va
 const apiUrl = import.meta.env.VITE_API_URL;
 const lambdaPublicUrl = import.meta.env.VITE_NOMBRE_FUNCION_LAMBDA_URL;
 const networkTimeoutMs = Number(import.meta.env.VITE_NETWORK_TIMEOUT_MS ?? 30000);
-const phaseTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
+const phaseTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 120000);
 const fileReadTimeoutMs = Number(import.meta.env.VITE_FILE_READ_TIMEOUT_MS ?? 20000);
 
 const fetchWithTimeout = async (
