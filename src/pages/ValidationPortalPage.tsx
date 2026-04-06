@@ -611,7 +611,7 @@ const ValidationPortalPage = () => {
                         type="button"
                         onClick={handleResetRecord}
                         disabled={!canResetRecord}
-                        className={`rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-rose-300 hover:text-rose-700 ${
+                        className={`rounded-xl bg-glik-accent px-3 py-2 text-sm font-semibold text-white transition hover:bg-orange-600 ${
                           !canResetRecord ? 'cursor-not-allowed opacity-50' : ''
                         }`}
                       >
