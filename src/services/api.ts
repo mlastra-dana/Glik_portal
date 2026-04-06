@@ -2,6 +2,7 @@ import { DocumentType, ValidationResult } from '../types/validation';
 import { CompareExpedientResponse, SlotExtraction, ValidateDocumentsResponse, ValidateImagesResponse } from '../types/api';
 
 const apiUrl = import.meta.env.VITE_API_URL;
+const lambdaPublicUrl = import.meta.env.VITE_NOMBRE_FUNCION_LAMBDA_URL;
 const networkTimeoutMs = Number(import.meta.env.VITE_NETWORK_TIMEOUT_MS ?? 30000);
 const phaseTimeoutMs = Number(import.meta.env.VITE_LAMBDA_TIMEOUT_MS ?? 45000);
 const fileReadTimeoutMs = Number(import.meta.env.VITE_FILE_READ_TIMEOUT_MS ?? 20000);
@@ -29,11 +30,34 @@ const fetchWithTimeout = async (
   }
 };
 
-const ensureApiUrl = () => {
-  if (!apiUrl) {
-    throw new Error('Falta VITE_API_URL en variables de entorno.');
+const isAbsoluteUrl = (value: string) => /^https?:\/\//i.test(value);
+
+const normalizeBaseUrl = (value: string) => value.trim().replace(/\/+$/, '');
+
+const resolveApiUrl = () => {
+  if (!apiUrl && !lambdaPublicUrl) {
+    throw new Error('Faltan variables de entorno del backend (VITE_API_URL o VITE_NOMBRE_FUNCION_LAMBDA_URL).');
   }
-  return apiUrl;
+
+  if (!apiUrl && lambdaPublicUrl) {
+    return normalizeBaseUrl(lambdaPublicUrl);
+  }
+
+  if (apiUrl) {
+    const cleanApiUrl = apiUrl.trim();
+    if (isAbsoluteUrl(cleanApiUrl)) {
+      return normalizeBaseUrl(cleanApiUrl);
+    }
+
+    // `/api` usa proxy de Vite; fuera de desarrollo no existe ese proxy.
+    if (lambdaPublicUrl && !import.meta.env.DEV) {
+      return normalizeBaseUrl(lambdaPublicUrl);
+    }
+
+    return cleanApiUrl;
+  }
+
+  throw new Error('Falta una URL válida para el backend.');
 };
 
 const normalizePlate = (value?: string | null) => (value ? value.replace(/\s+/g, '').toUpperCase().trim() : null);
@@ -101,7 +125,7 @@ const toBase64 = (file: File): Promise<string> =>
 
 const postDirect = async <TResponse>(payload: Record<string, unknown>, timeoutMs = networkTimeoutMs) => {
   const response = await fetchWithTimeout(
-    ensureApiUrl(),
+    resolveApiUrl(),
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
