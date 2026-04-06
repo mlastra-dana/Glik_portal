@@ -20,7 +20,6 @@ DOCUMENTS_BUCKET_NAME = os.environ.get("DOCUMENTS_BUCKET_NAME", "")
 EXTRACTIONS_BUCKET_NAME = os.environ.get("EXTRACTIONS_BUCKET_NAME", DOCUMENTS_BUCKET_NAME)
 SLOT_VALIDATION_MAX_WORKERS = int(os.environ.get("SLOT_VALIDATION_MAX_WORKERS", "4"))
 BEDROCK_MAX_TOKENS = int(os.environ.get("BEDROCK_MAX_TOKENS", "260"))
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 
 if not BEDROCK_MODEL_ID:
     logger.warning("BEDROCK_MODEL_ID no está definido en variables de entorno.")
@@ -45,9 +44,6 @@ def response(status_code: int, body: Dict[str, Any]) -> Dict[str, Any]:
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-            "Access-Control-Allow-Headers": "Content-Type,Authorization",
-            "Access-Control-Allow-Methods": "OPTIONS,POST",
         },
         "body": json.dumps(body, ensure_ascii=False),
     }
@@ -952,11 +948,6 @@ def lambda_handler(event, context):
     if event.get("requestContext", {}).get("http", {}).get("method") == "OPTIONS":
         return {
             "statusCode": 200,
-            "headers": {
-                "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-                "Access-Control-Allow-Headers": "Content-Type,Authorization",
-                "Access-Control-Allow-Methods": "OPTIONS,POST",
-            },
             "body": "",
         }
 
