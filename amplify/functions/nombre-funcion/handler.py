@@ -437,7 +437,17 @@ def extract_document_with_textract(slot: str, filename: str, document: Dict[str,
         if bool(fallback.get("document_valid")):
             fallback["reason"] = "Documento válido (fallback por formato no soportado en Textract)"
         else:
-            fallback["reason"] = "No se pudo procesar documento automáticamente (formato no soportado en Textract)"
+            fallback_reason = normalize_text(str(fallback.get("reason") or ""))
+            fallback_reason_lower = fallback_reason.lower()
+            # Si el fallback ya determinó tipo documental inválido, preservamos ese mensaje de negocio.
+            if (
+                "no corresponde" in fallback_reason_lower
+                or "tipo documental inválido" in fallback_reason_lower
+                or "serial no legible" in fallback_reason_lower
+            ):
+                fallback["reason"] = fallback_reason
+            else:
+                fallback["reason"] = "No se pudo procesar documento automáticamente (formato no soportado en Textract)"
         return fallback
 
     plate = fields.get("plate")

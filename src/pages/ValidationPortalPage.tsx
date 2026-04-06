@@ -165,9 +165,7 @@ const ValidationPortalPage = () => {
 
   const handleStartNewExpedient = () => {
     if (!canResetRecord) return;
-    setAgentFirstName('');
-    setAgentLastName('');
-    setFlowStep(1);
+    setFlowStep(canContinueToValidation ? 2 : 1);
     setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
     setRawExtractions({});
     setCompareResult(null);
