@@ -163,6 +163,32 @@ const ValidationPortalPage = () => {
     }
   };
 
+  const handleStartNewExpedient = () => {
+    if (!canResetRecord) return;
+    setAgentFirstName('');
+    setAgentLastName('');
+    setFlowStep(1);
+    setDocuments((prev) => prev.map((doc) => resetDocument(doc)));
+    setRawExtractions({});
+    setCompareResult(null);
+    setPhaseCompleted({
+      validateDocuments: false,
+      validateImages: false
+    });
+    setPhaseErrors({
+      upload: '',
+      validateDocuments: '',
+      validateImages: '',
+      compare: ''
+    });
+    setUploadingBySlot({
+      invoice: false,
+      certificate_of_origin: false,
+      photo_plate: false,
+      photo_serial: false
+    });
+  };
+
   const setDocumentStatus = (slot: DocumentType, patch: Partial<UploadedDocument>) => {
     setDocuments((prev) => prev.map((doc) => (doc.type === slot ? { ...doc, ...patch } : doc)));
   };
@@ -275,6 +301,9 @@ const ValidationPortalPage = () => {
     }
     return 'Los seriales no coinciden con la referencia del certificado de origen.';
   }, [compareResult, phaseCompleted.validateDocuments, phaseCompleted.validateImages, rawExtractions]);
+
+  const isSummaryValidated =
+    compareResult?.cross_validation?.plate_match === true && compareResult?.cross_validation?.serial_match === true;
 
   const handleSendToDanaDemo = async () => {
     if (!canSendToDana || !compareResult) return;
@@ -923,10 +952,11 @@ const ValidationPortalPage = () => {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setFlowStep(2)}
-                    className="btn-primary"
+                    onClick={handleStartNewExpedient}
+                    disabled={!canResetRecord}
+                    className={`btn-primary ${!canResetRecord ? 'cursor-not-allowed opacity-50' : ''}`}
                   >
-                    Volver
+                    Nuevo expediente
                   </button>
                 </div>
 
@@ -1016,8 +1046,8 @@ const ValidationPortalPage = () => {
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Resultado final del expediente</p>
                   <p className="mt-2 text-sm font-semibold text-slate-800">
                     Estado:{' '}
-                    <span className={compareResult?.overall_status === 'validated' ? 'text-emerald-700' : 'text-amber-700'}>
-                      {compareResult?.overall_status === 'validated' ? 'Validado' : 'Revisión manual'}
+                    <span className={isSummaryValidated ? 'text-emerald-700' : 'text-amber-700'}>
+                      {isSummaryValidated ? 'Documentos validados' : 'Revisión manual'}
                     </span>
                   </p>
                 </div>
