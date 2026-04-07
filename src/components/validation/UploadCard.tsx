@@ -58,6 +58,14 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
     if (file) {
       onSelectFile(document.type, file);
     }
+    event.target.value = '';
+  };
+
+  const handleClearFile = () => {
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+    onClear(document.type);
   };
 
   return (
@@ -74,7 +82,7 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
           {document.fileName ? (
             <button
               type="button"
-              onClick={() => onClear(document.type)}
+              onClick={handleClearFile}
               className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-sm font-bold text-slate-500 transition hover:border-rose-400 hover:text-rose-600"
               aria-label={`Quitar ${document.label}`}
             >
@@ -99,7 +107,7 @@ const UploadCard = ({ document, onSelectFile, onClear, isValidating = false, act
         <span className="text-sm font-medium text-slate-700">
           {document.fileName ? document.fileName : 'Seleccionar archivo'}
         </span>
-        <span className="text-xs font-semibold text-glik-primary">{document.fileName ? 'Reemplazar' : 'Subir'}</span>
+        <span className="text-xs font-semibold text-glik-primary">Subir</span>
       </button>
 
       <input
