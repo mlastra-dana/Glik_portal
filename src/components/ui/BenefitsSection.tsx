@@ -6,7 +6,7 @@ const BenefitsSection = () => {
       <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-soft">
         <h2 className="section-title">Alcance de la validación</h2>
         <p className="section-subtitle">
-          El portal verifica tipología documental y consistencia de expediente para operación interna o aliados.
+          El portal verifica la tipología documental y la consistencia del expediente para la operación interna o aliados.
         </p>
 
         <div className="mt-6 grid gap-3 md:grid-cols-3">

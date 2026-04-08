@@ -39,7 +39,7 @@ const ExpeditionDashboard = ({ documents, result, isValidating }: ExpeditionDash
 
         {!isValidating && !result ? (
           <p className="mt-3 text-sm text-slate-600">
-            Cargue los documentos requeridos y ejecute la validación para obtener resultado.
+            Cargue los documentos requeridos y ejecute la validación para obtener un resultado.
           </p>
         ) : null}
 

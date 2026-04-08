@@ -14,7 +14,7 @@ const HeroSection = () => {
                 Módulo operativo logístico
               </p>
               <h1 className="mt-3 font-display text-3xl font-bold leading-tight text-white sm:text-4xl">
-                Validación logistica
+                Validación Logística
               </h1>
               <p className="mt-4 max-w-2xl text-sm text-purple-100 sm:text-base">
                 Cargue soportes y valide consistencia documental para operación logística.

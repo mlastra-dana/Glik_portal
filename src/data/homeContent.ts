@@ -9,7 +9,7 @@ export const benefits = [
   },
   {
     title: 'Decisión operativa',
-    description: 'Genera estado final: validado, observado o revisión manual.'
+    description: 'Genera un estado final: validado, observado o revisión manual.'
   }
 ];
 
@@ -20,7 +20,7 @@ export const flowSteps = [
   },
   {
     title: '2. Validación de reglas',
-    description: 'El sistema valida tipo documental y coherencia del expediente.'
+    description: 'El sistema valida el tipo documental y la coherencia del expediente.'
   },
   {
     title: '3. Resultado y gestión',
@@ -34,7 +34,7 @@ export const faqs = [
     answer: 'El expediente no puede validarse hasta completar los cuatro documentos obligatorios.'
   },
   {
-    question: '¿Qué significa estado observado?',
+    question: '¿Qué significa el estado observado?',
     answer: 'Existe inconsistencia parcial y el caso requiere revisión antes de continuar.'
   },
   {

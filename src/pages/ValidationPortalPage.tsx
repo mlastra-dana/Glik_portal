@@ -549,7 +549,7 @@ const ValidationPortalPage = () => {
                   value={agentFirstName}
                   onChange={(event) => setAgentFirstName(event.target.value)}
                   className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm text-slate-800 outline-none transition focus:border-glik-primary"
-                  placeholder="Ej. Maria"
+                  placeholder="Ej. María"
                 />
               </label>
               <label className="space-y-1 text-sm font-medium text-slate-700">

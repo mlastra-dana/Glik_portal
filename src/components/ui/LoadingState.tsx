@@ -5,7 +5,7 @@ interface LoadingStateProps {
 
 const LoadingState = ({
   title = 'Validando expediente...',
-  description = 'Estamos simulando verificaciones de tipo documental y consistencia de placa/serial.'
+  description = 'Estamos simulando verificaciones de tipo documental y consistencia de placa y serial.'
 }: LoadingStateProps) => {
   return (
     <div className="rounded-2xl border border-slate-200 bg-white p-8 shadow-soft">
